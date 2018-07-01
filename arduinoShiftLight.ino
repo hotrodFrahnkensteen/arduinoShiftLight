@@ -1,35 +1,30 @@
+// hopefully no global vars
+bool ok = true;
+bool verbose = true;
+
+// eeprom
 #include <EEPROMex.h>
 #define CONFIG_VERSION "ls1"
 #define MEMORY_BASE 32
-bool ok = true;
-bool verbose = false;
 int configAddress = 0;
 
+// neopixel
 #include <Adafruit_NeoPixel.h>
 #include <avr/power.h>
-
+// alpha-quad
 #include <Wire.h>
 #include "Adafruit_LEDBackpack.h"
 #include "Adafruit_GFX.h"
+// rotary encoder
+#include <Rotary.h>
 
-// these should all be unsigned int
-#define SHIFTLIGHT_ID 0
-#define SHIFTLIGHT_BRIGHTNESS 1
-#define SHIFTLIGHT_ENABLE_RPM 2
-#define SHIFTLIGHT_SHIFT_RPM 3
-#define SHIFTLIGHT_COLOR_PRIMARY 4 // colors will have to be represented as 0xGGRRBB
-#define SHIFTLIGHT_COLOR_SECONDARY 5
-#define SHIFTLIGHT_COLOR_TERTIARY 6
-#define SHIFTLIGHT_COLOR_SHIFT_PRIMARY 7
-#define SHIFTLIGHT_COLOR_SHIFT_SECONDARY 8
-
-//unsigned int mySettings[9]; // in setup set initial values
+//SettingsStruct Settings;
 struct SettingsStruct {
   char version[4];
   byte brightness;
   unsigned int enable_rpm;
   unsigned int shift_rpm;
-  byte color_primary;
+  byte color_primary;  // colors will have to be represented as 0xGGRRBB
   byte color_secondary;
   byte color_tertiary;
   byte color_shift_primary;
@@ -38,20 +33,16 @@ struct SettingsStruct {
 } Settings = {
   CONFIG_VERSION,
   0x7F, 0xDAC, 0x1D4C, 0x50, 0x38, 0xC, 0xFC, 0xE0
+// 127,  3500,   7500, colors
 };
-//SettingsStruct Settings;
 
 #define NEO_PIN 5
-
 // Parameter 1 = number of pixels in strip
 // Parameter 2 = Arduino pin number (most are valid)
 // Parameter 3 = pixel type flags, add together as needed:
 //   NEO_KHZ800  800 KHz bitstream (most NeoPixel products w/WS2812 LEDs)
-//   NEO_KHZ400  400 KHz (classic 'v1' (not v2) FLORA pixels, WS2811 drivers)
-//   NEO_GRB     Pixels are wired for GRB bitstream (most NeoPixel products)
-//   NEO_RGB     Pixels are wired for RGB bitstream (v1 FLORA pixels, not v2)
-//Adafruit_NeoPixel strip = Adafruit_NeoPixel(60, PIN, NEO_GRB + NEO_KHZ800);
-Adafruit_NeoPixel strip = Adafruit_NeoPixel(8, NEO_PIN, NEO_GRB + NEO_KHZ800);
+//   NEO_GRB     Pixels are wired for GRB bitstream (mtost NeoPixel products)
+Adafruit_NeoPixel strip = Adafruit_NeoPixel(16, NEO_PIN, NEO_GRB + NEO_KHZ800);
 
 // IMPORTANT: To reduce NeoPixel burnout risk, add 1000 uF capacitor across
 // pixel power leads, add 300 - 500 Ohm resistor on first pixel's data input
@@ -59,36 +50,47 @@ Adafruit_NeoPixel strip = Adafruit_NeoPixel(8, NEO_PIN, NEO_GRB + NEO_KHZ800);
 // on a live circuit...if you must, connect GND first.
 
 Adafruit_AlphaNum4 alpha4 = Adafruit_AlphaNum4();
-//#define ALPHAPWM 6
 char displaybuffer[5] = {' ', ' ', ' ', ' ', ' '};
+
+// rotary encoder
+// outputs on pins 0 and 1
+Rotary rotary = Rotary(0,1);
+int clickCounter = 0;
+int clickCounterLast = 0; 
+
+// button on rotary encoder
+#define buttonPin 7
+// stuff for rotary encoder on interrupts
+// http://www.buxtronix.net/2011/10/rotary-encoders-done-properly.html
+// https://github.com/buxtronix/arduino/tree/master/libraries/Rotary
+#define encoder0PinA 0 // int 2 is pin 0 in micro
+#define encoder0PinB 1 // int 3 is pin 1 in micro
 /*
-char longdisplaybuffer[16];
-String menustring;
+ * volatile int encoder0Pos = 0;
+ * volatile int lastencoder0Pos = 0;
+ * #define readA bitRead(PIND,2)//faster than digitalRead()
+ * #define readB bitRead(PIND,3)//faster than digitalRead()
 */
 
-// stuff for rotary encoder on interrupts
-#define encoder0PinA 0
-#define encoder0PinB 1
-volatile int encoder0Pos = 0;
-volatile int lastencoder0Pos = 0;
+// menu state machine
 boolean menuState = false;
 boolean lastMenuState = false;
 volatile int menuPos = 0;
 volatile int lastmenuPos;
-
 boolean setItemState = false;
 boolean lastSetItemState = false;
 volatile int setItemPos = 0;
-
 boolean rootItemState = false;
 
-// button debounce code
-int lastButtonState = LOW;   // the previous reading from the input pin
-
-// the following variables are long's because the time, measured in miliseconds,
-// will quickly become a bigger number than can be stored in an int.
-long lastDebounceTime = 0;  // the last time the output pin was toggled
-long debounceDelay = 50;    // the debounce time; increase if the output flickers
+//configuration for the Tachometer variables 
+#define tachPin 3 
+int rpm; 
+int rpmlast = 3000; 
+int rpm_interval = 3000;
+const int timeoutValue = 5; 
+volatile unsigned long lastPulseTime; 
+volatile unsigned long interval = 0; 
+volatile int timeoutCounter;
 
 
 void setup() {
@@ -103,17 +105,7 @@ void setup() {
   EEPROM.setMemPool(MEMORY_BASE, EEPROMSizeMicro); // set memorypool base to 32, micro board
   configAddress = EEPROM.getAddress(sizeof(SettingsStruct)); // size of config object
   ok = loadConfig();
-  
-  // need to read settings from EEPROM 
-  //mySettings[SHIFTLIGHT_ID] = 0; // this should be some static value that can be verified by reading eeprom
-  //mySettings[SHIFTLIGHT_BRIGHTNESS] = 127;
-  //mySettings[SHIFTLIGHT_ENABLE_RPM] = 3000;
-  //mySettings[SHIFTLIGHT_SHIFT_RPM] = 7000;
-  //mySettings[SHIFTLIGHT_COLOR_PRIMARY] = 0x50;
-  //mySettings[SHIFTLIGHT_COLOR_SECONDARY] = 0x38;
-  //mySettings[SHIFTLIGHT_COLOR_TERTIARY] = 0xC;
-  //mySettings[SHIFTLIGHT_COLOR_SHIFT_PRIMARY] = 0xFC;
-  //mySettings[SHIFTLIGHT_COLOR_SHIFT_SECONDARY] = 0xE0;
+  alpha4.setBrightness(Settings.brightness / 16);
 
   // quadalpha setup
 
@@ -128,34 +120,15 @@ void setup() {
   //  delay(10);
   //}
   alpha4DashChase();
-  
+  delay(100);
+    
   // neopixel setup
   strip.begin();
   strip.show(); // Initialize all pixels to 'off'
-  rainbowCycle(5);
-  delay(400);
+  rainbow(5);
+  //rainbowCycle(5);
+  delay(100);
   blackout();
-  //colorWipe(strip.Color(255, 0, 0), 50); // Red
-  //colorWipe(strip.Color(0, 255, 0), 50); // Green
-  //colorWipe(strip.Color(0, 0, 255), 50); // Blue
-  //colorWipe(strip.Color(0, 0, 0), 50); // Black out
-  
-  alpha4.writeDigitRaw(3, 0x0);
-  alpha4.writeDigitRaw(0, 0xFFFF);
-  alpha4.writeDisplay();
-  delay(200);
-  alpha4.writeDigitRaw(0, 0x0);
-  alpha4.writeDigitRaw(1, 0xFFFF);
-  alpha4.writeDisplay();
-  delay(200);
-  alpha4.writeDigitRaw(1, 0x0);
-  alpha4.writeDigitRaw(2, 0xFFFF);
-  alpha4.writeDisplay();
-  delay(200);
-  alpha4.writeDigitRaw(2, 0x0);
-  alpha4.writeDigitRaw(3, 0xFFFF);
-  alpha4.writeDisplay();
-  delay(200);
   
   alpha4.clear();
   alpha4.writeDisplay();
@@ -170,45 +143,98 @@ void setup() {
     
   //  delay(300);
   //}
-  String("Tach").toCharArray(displaybuffer,5);
-  alpha4print();
-  //alpha4.writeDigitAscii(0, 'S');
-  //alpha4.writeDigitAscii(1, 't');
-  //alpha4.writeDigitAscii(2, 'r');
-  //alpha4.writeDigitAscii(3, 't');
-  //alpha4.writeDisplay();
+  
+//  String("Tach").toCharArray(displaybuffer,5);
+//  alpha4print();
+//  delay(10);
   
   // button setup
-  attachInterrupt(4, button, RISING);
+  attachInterrupt(digitalPinToInterrupt(buttonPin), button, RISING);
   
   // rotary encoder setup
-  pinMode(encoder0PinA, INPUT); 
-  pinMode(encoder0PinB, INPUT);
-  attachInterrupt(2, doEncoderA, CHANGE); // int 2 is pin 0 in micro
-  attachInterrupt(3, doEncoderB, CHANGE); // int 3 is pin 1 in micro
+  pinMode(encoder0PinA, INPUT_PULLUP); 
+  pinMode(encoder0PinB, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(encoder0PinA), rotate, CHANGE); 
+  attachInterrupt(digitalPinToInterrupt(encoder0PinB), rotate, CHANGE); 
+
+  // config for the Tach 
+  /*
+  pinMode(tachPin, INPUT); 
+  // digitalWrite(sensorPin, HIGH); // enable internal pullup (if Hall sensor needs it) 
+  attachInterrupt(digitalPinToInterrupt(tachPin), tachIsr, RISING); 
+  lastPulseTime = micros(); 
+  */
+  timeoutCounter = 0; 
 }
 
+
+/*
+ * MAIN 
+ */
 void loop() {  
-  if ( verbose ) {
-    delay(100); // pause to not overload serial io
-  } else {
-    delay(10);
-  }
+/*  
+ *   if ( verbose ) {
+ *   delay(100); // pause to not overload serial io
+ * } else {
+ *   delay(10);
+ * }
+ */
+
+  /*
+   * 
+   * 
+   * start of main block
+   * 
+   * 
+   */
+
+  // tachometer routine
+  if (timeoutCounter != 0) { 
+    --timeoutCounter; 
+
+    //This calculation will need to be calibrated for each application 
+    float rpm = 60e6/(float)interval; // ORIGINAL 
+    //rpm = 21e6/interval; // CALIBRATED 
+    // Serial.print(rpm); 
+    // matrix.println(rpm); 
+    // matrix.writeDisplay(); 
+  } 
   
-  //lastencoder0Pos = encoder0Pos;
+  //remove erroneous results 
+  if (rpm > rpmlast+500){rpm=rpmlast;} 
+  rpmlast = rpm; 
+  //Let's keep this RPM value under control, between 0 and 8000 
+  rpm = constrain (rpm, 0, 8000); 
+  // given the nature of the RPM interrupt reader, a zero reading will produce a max result 
+  // this fixes this quirk 
+  if (rpm==8000){rpm=0;} 
+  if ((micros() - lastPulseTime) < 5e6 ) { 
+    Serial.println(rpm); 
+    String(rpm).toCharArray(displaybuffer,5);
+    alpha4print(); 
+    delay(10); 
+  } 
+  else { 
+    // if there is no rpm measured we should do something like blank out the display
+//    matrix.clear(); 
+//    matrix.writeDisplay(); 
+  } 
+
+
+   
   if ( menuState && !setItemState ) { // HIGH LOW
     // scroll through menu items
-    if ( encoder0Pos > lastencoder0Pos + 3 && menuPos < 9 ) {
+    if ( clickCounter > clickCounterLast && menuPos < 9 ) {
       ++menuPos;
-      lastencoder0Pos = encoder0Pos;
-    } else if ( encoder0Pos < lastencoder0Pos - 3 && menuPos > 0 ) {
+        clickCounterLast = clickCounter;
+
+    } else if ( clickCounter < clickCounterLast && menuPos > 0 ) {
       --menuPos;
-      lastencoder0Pos = encoder0Pos;
-    } else {
-      lastencoder0Pos = encoder0Pos;
+        clickCounterLast = clickCounter;
+
     }
     if ( verbose ) {
-      Serial.print("encoder: " + String(encoder0Pos) + " last encoder: " + String(lastencoder0Pos) + " menu: " + String(menuPos));
+      Serial.print("encoder: " + String(clickCounter) + " last encoder: " + String(clickCounterLast) + " menu: " + String(menuPos));
       Serial.println(" menu: " + String(menuState) + " setItem: " + String(setItemState) + " rootItem: " + String(rootItemState));
     }
   } else if ( menuState && setItemState ) { // HIGH HIGH
@@ -224,48 +250,30 @@ void loop() {
         // usable range seems to be more like 0x2F is super dim
         // and 0x6B is bright, but not painfully so
         // and of course anything above that is silly
-        /*
-        if ( mySettings[SHIFTLIGHT_BRIGHTNESS] > 256 ) {
-          mySettings[SHIFTLIGHT_BRIGHTNESS] = 255;
-        } else if (mySettings[SHIFTLIGHT_BRIGHTNESS] < 0 ) {
-          mySettings[SHIFTLIGHT_BRIGHTNESS] = 0;
-        }
-        */
-        /*
-        if ( encoder0Pos > lastencoder0Pos && mySettings[SHIFTLIGHT_BRIGHTNESS] < 251) {
-          mySettings[SHIFTLIGHT_BRIGHTNESS] += 4;
-        } else if ( encoder0Pos < lastencoder0Pos && mySettings[SHIFTLIGHT_BRIGHTNESS] > 0 ) {
-          mySettings[SHIFTLIGHT_BRIGHTNESS] -= 4;
-        }
-        */
         
-        if ( encoder0Pos > lastencoder0Pos && Settings.brightness < 251 ) {
-          Settings.brightness += 4;
-        } else if ( encoder0Pos < lastencoder0Pos && Settings.brightness > 8 ) {
-          Settings.brightness -= 4;
+        if ( clickCounter > clickCounterLast ) {
+          Settings.brightness += 16;
+          
+        } else if ( clickCounter < clickCounterLast ) {
+          Settings.brightness -= 16;
         }
-        lastencoder0Pos = encoder0Pos;
+        if ( Settings.brightness < 16 ) { Settings.brightness = 16; }
+        if ( Settings.brightness > 240 ) { Settings.brightness = 240; }
+        clickCounterLast = clickCounter;
+
         //analogWrite(ALPHAPWM, mySettings[SHIFTLIGHT_BRIGHTNESS]);
-        /*
-        colorFill(Wheel(mySettings[SHIFTLIGHT_COLOR_PRIMARY]),mySettings[SHIFTLIGHT_BRIGHTNESS]);
-        */
+        alpha4.setBrightness(Settings.brightness / 16);
+        String(Settings.brightness).toCharArray(displaybuffer,5);
+        alpha4print();
         colorFill(Wheel(Settings.color_primary),Settings.brightness);
         break;
       case 2: // enable rpm
-        /*
-        if ( encoder0Pos > lastencoder0Pos && mySettings[menuPos] <= mySettings[SHIFTLIGHT_SHIFT_RPM] - 200 ) {
-          mySettings[menuPos] += 100;
-        } else if ( encoder0Pos < lastencoder0Pos && mySettings[menuPos] > 3000 ) {
-          mySettings[menuPos] -= 100;
-        }
-        */
-        if ( encoder0Pos > lastencoder0Pos && Settings.enable_rpm <= Settings.shift_rpm - 200 ) {
+        if ( clickCounter > clickCounterLast && Settings.enable_rpm <= Settings.shift_rpm - 200 ) {
           Settings.enable_rpm += 100;
-        } else if ( encoder0Pos < lastencoder0Pos && Settings.enable_rpm > 3000 ) {
+        } else if ( clickCounter < clickCounterLast && Settings.enable_rpm > 2500 ) {
           Settings.enable_rpm -= 100;
         }
-        lastencoder0Pos = encoder0Pos;
-        //String(mySettings[menuPos]).toCharArray(displaybuffer,5);
+          clickCounterLast = clickCounter;
         String(Settings.enable_rpm).toCharArray(displaybuffer,5);
         alpha4print();
         break;
@@ -277,63 +285,97 @@ void loop() {
           mySettings[menuPos] -= 100;
         }
         */
-        if ( encoder0Pos > lastencoder0Pos && Settings.shift_rpm <= 9800 ) {
+        if ( clickCounter > clickCounterLast && Settings.shift_rpm <= 9800 ) {
           Settings.shift_rpm += 100;
-        } else if ( encoder0Pos < lastencoder0Pos && Settings.shift_rpm > Settings.enable_rpm ) {
+        } else if ( clickCounter < clickCounterLast && Settings.shift_rpm > Settings.enable_rpm ) {
           Settings.shift_rpm -= 100;
         }
-        lastencoder0Pos = encoder0Pos;
+  clickCounterLast = clickCounter;
+
+        // lastencoder0Pos = encoder0Pos;
         // print rpm on quadalpha
         //String(mySettings[menuPos]).toCharArray(displaybuffer,5);
         String(Settings.shift_rpm).toCharArray(displaybuffer,5);
         alpha4print();
         break;
       case 4: // color 1
-        if ( encoder0Pos > lastencoder0Pos && Settings.color_primary < 251 ) {
+        if ( clickCounter > clickCounterLast ) {
           Settings.color_primary += 4;
-        } else if ( encoder0Pos < lastencoder0Pos && Settings.color_primary > 0 ) {
+        } else if ( clickCounter < clickCounterLast ) {
           Settings.color_primary -= 4;
         }
-        lastencoder0Pos = encoder0Pos;
+        if ( Settings.brightness < 8 ) { Settings.brightness = 252; }
+        if ( Settings.brightness > 252 ) { Settings.brightness = 8; }
+        // lastencoder0Pos = encoder0Pos
+          clickCounterLast = clickCounter;
+
+        String(Settings.color_primary).toCharArray(displaybuffer,5);
+        alpha4print();
         colorFill(Wheel(Settings.color_primary),Settings.brightness);
         break;
       case 5: // color 2
-        if ( encoder0Pos > lastencoder0Pos && Settings.color_secondary < 251 ) {
+        if ( clickCounter > clickCounterLast ) {
           Settings.color_secondary += 4;
-        } else if ( encoder0Pos < lastencoder0Pos && Settings.color_secondary > 4 ) {
+        } else if ( clickCounter < clickCounterLast ) {
           Settings.color_secondary -= 4;
         }
-        lastencoder0Pos = encoder0Pos;
+        if ( Settings.brightness < 8 ) { Settings.brightness = 252; }
+        if ( Settings.brightness > 252 ) { Settings.brightness = 8; }
+          clickCounterLast = clickCounter;
+
+        // lastencoder0Pos = encoder0Pos;
+        String(Settings.color_secondary).toCharArray(displaybuffer,5);
+        alpha4print();
         colorFill(Wheel(Settings.color_secondary),Settings.brightness);
         break;
       case 6: // color 3
-        if ( encoder0Pos > lastencoder0Pos && Settings.color_tertiary < 251 ) {
+        if ( clickCounter > clickCounterLast ) {
           Settings.color_tertiary += 4;
-        } else if ( encoder0Pos < lastencoder0Pos && Settings.color_tertiary > 4 ) {
+        } else if ( clickCounter < clickCounterLast ) {
           Settings.color_tertiary -= 4;
         }
-        lastencoder0Pos = encoder0Pos;
+        if ( Settings.brightness < 8 ) { Settings.brightness = 252; }
+        if ( Settings.brightness > 252 ) { Settings.brightness = 8; }
+          clickCounterLast = clickCounter;
+
+        // lastencoder0Pos = encoder0Pos;
+        String(Settings.color_tertiary).toCharArray(displaybuffer,5);
+        alpha4print();
         colorFill(Wheel(Settings.color_tertiary),Settings.brightness);
         break;
       case 7: // shift color 1
-        if ( encoder0Pos > lastencoder0Pos && Settings.color_shift_primary < 251 ) {
+        if ( clickCounter > clickCounterLast ) {
           Settings.color_shift_primary += 4;
-        } else if ( encoder0Pos < lastencoder0Pos && Settings.color_shift_primary > 4 ) {
+        } else if ( clickCounter < clickCounterLast ) {
           Settings.color_shift_primary -= 4;
         }
-        lastencoder0Pos = encoder0Pos;
+        if ( Settings.brightness < 8 ) { Settings.brightness = 252; }
+        if ( Settings.brightness > 252 ) { Settings.brightness = 8; }
+          clickCounterLast = clickCounter;
+
+        // lastencoder0Pos = encoder0Pos;
+        String(Settings.color_shift_primary).toCharArray(displaybuffer,5);
+        alpha4print();
         colorFill(Wheel(Settings.color_shift_primary),Settings.brightness);
         break;
       case 8: // shift color 2
-        if ( encoder0Pos > lastencoder0Pos && Settings.color_shift_secondary < 251 ) {
+        if ( clickCounter > clickCounterLast ) {
           Settings.color_shift_secondary += 4;
-        } else if ( encoder0Pos < lastencoder0Pos && Settings.color_shift_secondary > 4 ) {
+        } else if ( clickCounter < clickCounterLast ) {
           Settings.color_shift_secondary -= 4;
         }
-        lastencoder0Pos = encoder0Pos;
+        if ( Settings.brightness < 8 ) { Settings.brightness = 252; }
+        if ( Settings.brightness > 252 ) { Settings.brightness = 8; }
+          clickCounterLast = clickCounter;
+
+        // lastencoder0Pos = encoder0Pos;
+        String(Settings.color_shift_secondary).toCharArray(displaybuffer,5);
+        alpha4print();
         colorFill(Wheel(Settings.color_shift_secondary),Settings.brightness);
         break;
       default: // brightness and colors
+        clickCounterLast = clickCounter;
+
         /*
         if ( encoder0Pos > lastencoder0Pos && mySettings[menuPos] < 251) {
           mySettings[menuPos] += 4;
@@ -345,8 +387,9 @@ void loop() {
         */
         break;
     }
+    
     if ( verbose ) {
-      Serial.print("encoder: " + String(encoder0Pos) + " last encoder: " + String(lastencoder0Pos) + " menu: " + String(menuPos));
+      Serial.print("encoder: " + String(clickCounter) + " last encoder: " + String(clickCounterLast) + " menu: " + String(menuPos));
       Serial.print(" menu: " + String(menuState) + " setItem: " + String(setItemState) + " rootItem: " + String(rootItemState));
       Serial.print(" brt: " + String(Settings.brightness,HEX) + 
         " enab: " + String(Settings.enable_rpm,DEC) +
@@ -358,34 +401,30 @@ void loop() {
         " sft2: " + String(Settings.color_shift_secondary,HEX));
     }
   } else {
-      lastencoder0Pos = encoder0Pos;
+//      lastencoder0Pos = encoder0Pos;
       if ( verbose ) {
-        Serial.print("encoder: " + String(encoder0Pos) + " last encoder: " + String(lastencoder0Pos) + " menu: " + String(menuPos));
+        Serial.print("encoder: " + String(clickCounter) + " last encoder: " + String(clickCounterLast) + " menu: " + String(menuPos));
         Serial.println(" menu: " + String(menuState) + " setItem: " + String(setItemState) + " rootItem: " + String(rootItemState));
       }
   }
+
   if ( menuState && !setItemState ) {
     switch (menuPos) {
       case 0:
         rootItemState = true;
-        displaybuffer[0] = 0x39;
-        displaybuffer[1] = 0x9;
-        displaybuffer[2] = 0x9;
-        displaybuffer[3] = 0xF;
-        alpha4printraw();
-        blackout();
+        //displaybuffer[0] = 0x39;
+        //displaybuffer[1] = 0x9;
+        //displaybuffer[2] = 0x9;
+        //displaybuffer[3] = 0xF;
+        //alpha4printraw();
+        //blackout();
+        String("EXIT").toCharArray(displaybuffer,5);
+        alpha4print();
         break;
       case 1:
         rootItemState = false;
         String("Brt ").toCharArray(displaybuffer,5);
         alpha4print();
-        /*
-        alpha4.writeDigitAscii(0, 'B');
-        alpha4.writeDigitAscii(1, 'r');
-        alpha4.writeDigitAscii(2, 't');
-        alpha4.writeDigitAscii(3, ' ');
-        alpha4.writeDisplay();
-        */
         /*
         menustring = String("Brightness");
         menustring.toCharArray(longdisplaybuffer,menustring.length());
@@ -396,117 +435,50 @@ void loop() {
         rootItemState = false;
         String("Enbl").toCharArray(displaybuffer,5);
         alpha4print();
-        /*
-        alpha4.writeDigitAscii(0, 'E');
-        alpha4.writeDigitAscii(1, 'n');
-        alpha4.writeDigitAscii(2, 'b');
-        alpha4.writeDigitAscii(3, 'l');
-        alpha4.writeDisplay();
-        */
         break;
       case 3:
         rootItemState = false;
         String("Shft").toCharArray(displaybuffer,5);
         alpha4print();
-        /*
-        alpha4.writeDigitAscii(0, 'S');
-        alpha4.writeDigitAscii(1, 'h');
-        alpha4.writeDigitAscii(2, 'f');
-        alpha4.writeDigitAscii(3, 't');
-        alpha4.writeDisplay();
-        */
         break;
       case 4:
         rootItemState = false;
         String("Col1").toCharArray(displaybuffer,5);
         alpha4print();
-        /*
-        alpha4.writeDigitAscii(0, 'C');
-        alpha4.writeDigitAscii(1, 'o');
-        alpha4.writeDigitAscii(2, 'l');
-        alpha4.writeDigitAscii(3, '1');
-        alpha4.writeDisplay();
-        */
         break;
       case 5:
         rootItemState = false;
         String("Col2").toCharArray(displaybuffer,5);
         alpha4print();
-        /*
-        alpha4.writeDigitAscii(0, 'C');
-        alpha4.writeDigitAscii(1, 'o');
-        alpha4.writeDigitAscii(2, 'l');
-        alpha4.writeDigitAscii(3, '2');
-        alpha4.writeDisplay();
-        */
         break;
       case 6:
         rootItemState = false;
         String("Col3").toCharArray(displaybuffer,5);
         alpha4print();
-        /*
-        alpha4.writeDigitAscii(0, 'C');
-        alpha4.writeDigitAscii(1, 'o');
-        alpha4.writeDigitAscii(2, 'l');
-        alpha4.writeDigitAscii(3, '3');
-        alpha4.writeDisplay();
-        */
         break;
       case 7:
         rootItemState = false;
         String("SC 1").toCharArray(displaybuffer,5);
         alpha4print();
-        /*
-        alpha4.writeDigitAscii(0, 'S');
-        alpha4.writeDigitAscii(1, 'C');
-        alpha4.writeDigitAscii(2, ' ');
-        alpha4.writeDigitAscii(3, '1');
-        alpha4.writeDisplay();
-        */
         break;
       case 8:
         rootItemState = false;
         String("SC 2").toCharArray(displaybuffer,5);
         alpha4print();
-        /*
-        alpha4.writeDigitAscii(0, 'S');
-        alpha4.writeDigitAscii(1, 'C');
-        alpha4.writeDigitAscii(2, ' ');
-        alpha4.writeDigitAscii(3, '2');
-        alpha4.writeDisplay();
-        */
         break;
       case 9:
         rootItemState = true;
-        alpha4.writeDigitRaw(0, 0x39);
-        alpha4.writeDigitRaw(1, 0x9);
-        alpha4.writeDigitRaw(2, 0x9);
-        alpha4.writeDigitRaw(3, 0xF);
-        alpha4.writeDisplay();
-        blackout();
+        //alpha4.writeDigitRaw(0, 0x39);
+        //alpha4.writeDigitRaw(1, 0x9);
+        //alpha4.writeDigitRaw(2, 0x9);
+        //alpha4.writeDigitRaw(3, 0xF);
+        //alpha4.writeDisplay();
+        //blackout();
+        String("SAVE").toCharArray(displaybuffer,5);
+        alpha4print();
         break;
     }
   }
-  //else {
-  //    alpha4.writeDigitAscii(0, 'S');
-  //    alpha4.writeDigitAscii(1, 't');
-  //    alpha4.writeDigitAscii(2, 'r');
-  //    alpha4.writeDigitAscii(3, 't');
-  //    alpha4.writeDisplay();
-  //}
-
-  // Some example procedures showing how to display to the pixels:
-  //colorWipe(strip.Color(255, 0, 0), 50); // Red
-  //colorWipe(strip.Color(0, 255, 0), 50); // Green
-  //colorWipe(strip.Color(0, 0, 255), 50); // Blue
-  // Send a theater pixel chase in...
-  //theaterChase(strip.Color(127, 127, 127), 50); // White
-  //theaterChase(strip.Color(127,   0,   0), 50); // Red
-  //theaterChase(strip.Color(  0,   0, 127), 50); // Blue
-
-  //rainbow(20);
-  //rainbowCycle(20);
-  //theaterChaseRainbow(50);
 }
 
 // Fill the dots one after the other with a color
@@ -536,7 +508,7 @@ void blackout(void) {
 
 void rainbow(uint8_t wait) {
   uint16_t i, j;
-
+  strip.setBrightness(32);
   for(j=0; j<256; j++) {
     for(i=0; i<strip.numPixels(); i++) {
       strip.setPixelColor(i, Wheel((i+j) & 255));
@@ -705,7 +677,7 @@ void alpha4DashChase() {
   }
   alpha4.writeDisplay();
     
-  for (int k = 0; k < 5; k++) {
+  for (int k = 0; k < 1; k++) {
     alpha4.clear();  // clear display first
     alpha4.writeDisplay();
   
@@ -744,16 +716,15 @@ void button()
 {
   static unsigned long last_interrupt_time = 0;
   unsigned long interrupt_time = millis();
-  // If interrupts come faster than 200ms, assume it's a bounce and ignore
-  if (interrupt_time - last_interrupt_time > 200) 
+  // If interrupts come faster than 50ms, assume it's a bounce and ignore
+  if (interrupt_time - last_interrupt_time > 50) 
   {
-   
-    // menuState HIGH or LOW
-    // setItemState HIGH or LOW
-    // rootItemState HIGH or LOW
-    // menuState HIGH setItemState LOW rootItemState LOW
-    // menuState HIGH setItemState HIGH rootItemState LOW
-    // menuState HIGH setItemState LOW rootItemState HIGH
+    // basically you can either be in the top level menu that lists your parameters
+    // or you can be in the menu for one of the parameters
+    // state 1: tach mode + button press = shift to state 2 (menu)
+    // state 2a: menu + special parameter + button press = shift to state 1 (go back to tach)
+    // state 2b: menu + parameter + button press = shift to state 3 (set parameter)
+    // state 3: set parameter + button press = save parameter + back to state 2a
     if ( menuState && setItemState && !rootItemState ) { // HIGH HIGH LOW
       // button press here should write to EEPROM
       // then move back to menu item selection
@@ -775,60 +746,15 @@ void button()
     }
   }
   last_interrupt_time = interrupt_time;
-  //delay(10); // slight delay for debounce
 }
 
-//
-// Encoder functions
-//
-
-void doEncoderA(){
-
-  // look for a low-to-high on channel A
-  if (digitalRead(encoder0PinA) == HIGH) { 
-    // check channel B to see which way encoder is turning
-    if (digitalRead(encoder0PinB) == LOW) {  
-      encoder0Pos = encoder0Pos + 1;         // CW
-    } 
-    else {
-      encoder0Pos = encoder0Pos - 1;         // CCW
-    }
-  }
-  else   // must be a high-to-low edge on channel A                                       
-  { 
-    // check channel B to see which way encoder is turning  
-    if (digitalRead(encoder0PinB) == HIGH) {   
-      encoder0Pos = encoder0Pos + 1;          // CW
-    } 
-    else {
-      encoder0Pos = encoder0Pos - 1;          // CCW
-    }
-  }
-  //Serial.println (encoder0Pos, DEC);          
-  // use for debugging - remember to comment out
-}
-
-void doEncoderB(){
-
-  // look for a low-to-high on channel B
-  if (digitalRead(encoder0PinB) == HIGH) {   
-   // check channel A to see which way encoder is turning
-    if (digitalRead(encoder0PinA) == HIGH) {  
-      encoder0Pos = encoder0Pos + 1;         // CW
-    } 
-    else {
-      encoder0Pos = encoder0Pos - 1;         // CCW
-    }
-  }
-  // Look for a high-to-low on channel B
-  else { 
-    // check channel B to see which way encoder is turning  
-    if (digitalRead(encoder0PinA) == LOW) {   
-      encoder0Pos = encoder0Pos + 1;          // CW
-    } 
-    else {
-      encoder0Pos = encoder0Pos - 1;          // CCW
-    }
+// rotate is called anytime the rotary inputs change state.
+void rotate() {
+  unsigned char result = rotary.process();
+  if (result == DIR_CW) {
+    clickCounter--;
+  } else if (result == DIR_CCW) {
+    clickCounter++;
   }
 }
 
@@ -843,7 +769,8 @@ bool loadConfig() {
   if ( Settings.shift_rpm > 9000 )
     Settings.shift_rpm = 7500;
   if ( verbose ) {
-    Serial.print("encoder: " + String(encoder0Pos) + " last encoder: " + String(lastencoder0Pos) + " menu: " + String(menuPos));
+//    Serial.print("encoder: " + String(encoder0Pos) + " last encoder: " + String(lastencoder0Pos) + " menu: " + String(menuPos));
+    Serial.print(" menu: " + String(menuPos));
     Serial.print(" menu: " + String(menuState) + " setItem: " + String(setItemState) + " rootItem: " + String(rootItemState));
     Serial.print(" brt: " + String(Settings.brightness,HEX) + 
         " enab: " + String(Settings.enable_rpm,DEC) +
@@ -867,4 +794,12 @@ void saveConfig() {
     delay(1000);
   }
 }
+
+void tachIsr() 
+{ 
+  unsigned long now = micros(); 
+  interval = now - lastPulseTime; 
+  lastPulseTime = now; 
+  timeoutCounter = timeoutValue; 
+} 
 
