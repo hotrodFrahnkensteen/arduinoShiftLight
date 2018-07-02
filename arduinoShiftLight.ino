@@ -252,13 +252,15 @@ void loop() {
         // and of course anything above that is silly
         
         if ( clickCounter > clickCounterLast ) {
-          Settings.brightness += 16;
+          if ( Settings.brightness < 240 ) { 
+            Settings.brightness += 16;
+          }
           
         } else if ( clickCounter < clickCounterLast ) {
-          Settings.brightness -= 16;
+          if ( Settings.brightness > 16 ) {
+            Settings.brightness -= 16;
+          }
         }
-        if ( Settings.brightness < 16 ) { Settings.brightness = 16; }
-        if ( Settings.brightness > 240 ) { Settings.brightness = 240; }
         clickCounterLast = clickCounter;
 
         //analogWrite(ALPHAPWM, mySettings[SHIFTLIGHT_BRIGHTNESS]);
@@ -717,7 +719,7 @@ void button()
   static unsigned long last_interrupt_time = 0;
   unsigned long interrupt_time = millis();
   // If interrupts come faster than 50ms, assume it's a bounce and ignore
-  if (interrupt_time - last_interrupt_time > 50) 
+  if (interrupt_time - last_interrupt_time > 200) 
   {
     // basically you can either be in the top level menu that lists your parameters
     // or you can be in the menu for one of the parameters
