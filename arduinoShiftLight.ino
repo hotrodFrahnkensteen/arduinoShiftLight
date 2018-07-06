@@ -50,7 +50,8 @@ Adafruit_NeoPixel strip = Adafruit_NeoPixel(16, NEO_PIN, NEO_GRB + NEO_KHZ800);
 // on a live circuit...if you must, connect GND first.
 
 Adafruit_AlphaNum4 alpha4 = Adafruit_AlphaNum4();
-char displaybuffer[5] = {' ', ' ', ' ', ' ', ' '};
+//char displaybuffer[5] = {' ', ' ', ' ', ' ', ' '};
+char displaybuffer[5] = "0000";
 
 // rotary encoder
 // outputs on pins 0 and 1
@@ -265,7 +266,8 @@ void loop() {
 
         //analogWrite(ALPHAPWM, mySettings[SHIFTLIGHT_BRIGHTNESS]);
         alpha4.setBrightness(Settings.brightness / 16);
-        String(Settings.brightness).toCharArray(displaybuffer,5);
+        //String("%04d",Settings.brightness).toCharArray(displaybuffer,5);
+        snprintf(displaybuffer, sizeof(displaybuffer), "%04d", Settings.brightness);
         alpha4print();
         colorFill(Wheel(Settings.color_primary),Settings.brightness);
         break;
@@ -276,7 +278,8 @@ void loop() {
           Settings.enable_rpm -= 100;
         }
           clickCounterLast = clickCounter;
-        String(Settings.enable_rpm).toCharArray(displaybuffer,5);
+        //String(Settings.enable_rpm).toCharArray(displaybuffer,5);
+        snprintf(displaybuffer, sizeof(displaybuffer), "%04d", Settings.enable_rpm);
         alpha4print();
         break;
       case 3: // shift rpm
@@ -297,7 +300,8 @@ void loop() {
         // lastencoder0Pos = encoder0Pos;
         // print rpm on quadalpha
         //String(mySettings[menuPos]).toCharArray(displaybuffer,5);
-        String(Settings.shift_rpm).toCharArray(displaybuffer,5);
+        //String(Settings.shift_rpm).toCharArray(displaybuffer,5);
+        snprintf(displaybuffer, sizeof(displaybuffer), "%04d", Settings.shift_rpm);
         alpha4print();
         break;
       case 4: // color 1
@@ -311,7 +315,8 @@ void loop() {
         // lastencoder0Pos = encoder0Pos
           clickCounterLast = clickCounter;
 
-        String(Settings.color_primary).toCharArray(displaybuffer,5);
+        //String(Settings.color_primary).toCharArray(displaybuffer,5);
+        snprintf(displaybuffer, sizeof(displaybuffer), "%04d", Settings.color_primary);
         alpha4print();
         colorFill(Wheel(Settings.color_primary),Settings.brightness);
         break;
@@ -326,7 +331,8 @@ void loop() {
           clickCounterLast = clickCounter;
 
         // lastencoder0Pos = encoder0Pos;
-        String(Settings.color_secondary).toCharArray(displaybuffer,5);
+        //String(Settings.color_secondary).toCharArray(displaybuffer,5);
+        snprintf(displaybuffer, sizeof(displaybuffer), "%04d", Settings.color_secondary);
         alpha4print();
         colorFill(Wheel(Settings.color_secondary),Settings.brightness);
         break;
@@ -341,7 +347,8 @@ void loop() {
           clickCounterLast = clickCounter;
 
         // lastencoder0Pos = encoder0Pos;
-        String(Settings.color_tertiary).toCharArray(displaybuffer,5);
+        //String(Settings.color_tertiary).toCharArray(displaybuffer,5);
+        snprintf(displaybuffer, sizeof(displaybuffer), "%04d", Settings.color_tertiary);
         alpha4print();
         colorFill(Wheel(Settings.color_tertiary),Settings.brightness);
         break;
@@ -356,7 +363,8 @@ void loop() {
           clickCounterLast = clickCounter;
 
         // lastencoder0Pos = encoder0Pos;
-        String(Settings.color_shift_primary).toCharArray(displaybuffer,5);
+        //String(Settings.color_shift_primary).toCharArray(displaybuffer,5);
+        snprintf(displaybuffer, sizeof(displaybuffer), "%04d", Settings.color_shift_primary);
         alpha4print();
         colorFill(Wheel(Settings.color_shift_primary),Settings.brightness);
         break;
@@ -371,7 +379,8 @@ void loop() {
           clickCounterLast = clickCounter;
 
         // lastencoder0Pos = encoder0Pos;
-        String(Settings.color_shift_secondary).toCharArray(displaybuffer,5);
+        //String(Settings.color_shift_secondary).toCharArray(displaybuffer,5);
+        snprintf(displaybuffer, sizeof(displaybuffer), "%04d", Settings.color_shift_secondary);
         alpha4print();
         colorFill(Wheel(Settings.color_shift_secondary),Settings.brightness);
         break;
@@ -422,6 +431,7 @@ void loop() {
         //blackout();
         String("EXIT").toCharArray(displaybuffer,5);
         alpha4print();
+        blackout();
         break;
       case 1:
         rootItemState = false;
@@ -478,6 +488,7 @@ void loop() {
         //blackout();
         String("SAVE").toCharArray(displaybuffer,5);
         alpha4print();
+        blackout();
         break;
     }
   }
@@ -734,6 +745,7 @@ void button()
       setItemState = false;
       //if ( ok )
       saveConfig();
+      blackout();
     } else if ( menuState && !setItemState && !rootItemState ) { // HIGH LOW LOW
       // we are at a menu item that we want to set
       lastSetItemState = setItemState;
