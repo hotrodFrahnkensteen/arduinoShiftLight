@@ -81,17 +81,15 @@ volatile int lastmenuPos;
 boolean setItemState = false;
 boolean lastSetItemState = false;
 volatile int setItemPos = 0;
-boolean rootItemState = false;
 
 //configuration for the Tachometer variables 
 #define tachPin 3 
 int rpm; 
-int rpmlast = 3000; 
-int rpm_interval = 3000;
-const int timeoutValue = 5; 
-volatile unsigned long lastPulseTime; 
-volatile unsigned long interval = 0; 
-volatile int timeoutCounter;
+int rpmLast = 3000; 
+float revValue = 0;
+float rev = 0;
+int oldTime = 0;
+int time;
 
 
 void setup() {
@@ -159,13 +157,9 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(encoder0PinB), rotate, CHANGE); 
 
   // config for the Tach 
-  /*
   pinMode(tachPin, INPUT); 
   // digitalWrite(sensorPin, HIGH); // enable internal pullup (if Hall sensor needs it) 
   attachInterrupt(digitalPinToInterrupt(tachPin), tachIsr, RISING); 
-  lastPulseTime = micros(); 
-  */
-  timeoutCounter = 0; 
 }
 
 
@@ -173,14 +167,6 @@ void setup() {
  * MAIN 
  */
 void loop() {  
-/*  
- *   if ( verbose ) {
- *   delay(100); // pause to not overload serial io
- * } else {
- *   delay(10);
- * }
- */
-
   /*
    * 
    * 
@@ -190,38 +176,21 @@ void loop() {
    */
 
   // tachometer routine
-  if (timeoutCounter != 0) { 
-    --timeoutCounter; 
-
-    //This calculation will need to be calibrated for each application 
-    float rpm = 60e6/(float)interval; // ORIGINAL 
-    //rpm = 21e6/interval; // CALIBRATED 
-    // Serial.print(rpm); 
-    // matrix.println(rpm); 
-    // matrix.writeDisplay(); 
-  } 
-  
-  //remove erroneous results 
-  if (rpm > rpmlast+500){rpm=rpmlast;} 
-  rpmlast = rpm; 
-  //Let's keep this RPM value under control, between 0 and 8000 
-  rpm = constrain (rpm, 0, 8000); 
+  // detach interrupt while doing sensitive maths
+  detachInterrupt(digitalPinToInterrupt(tachPin));
+  time = millis() - oldTime;        //finds the time 
+  rpm = (rev / time) * 60000;         //calculates rpm
+  oldTime = millis();             //saves the current time
+  rev = 0;
+  attachInterrupt(digitalPinToInterrupt(tachPin), tachIsr, RISING);
+  rpm = constrain (rpm, 0, 9999); 
   // given the nature of the RPM interrupt reader, a zero reading will produce a max result 
   // this fixes this quirk 
-  if (rpm==8000){rpm=0;} 
-  if ((micros() - lastPulseTime) < 5e6 ) { 
-    Serial.println(rpm); 
-    String(rpm).toCharArray(displaybuffer,5);
-    alpha4print(); 
-    delay(10); 
-  } 
-  else { 
-    // if there is no rpm measured we should do something like blank out the display
-//    matrix.clear(); 
-//    matrix.writeDisplay(); 
-  } 
-
-
+  Serial.println(rpm); 
+  //String(rpm).toCharArray(displaybuffer,5);
+  snprintf(displaybuffer, sizeof(displaybuffer), "%04d", rpm);
+  alpha4print(); 
+  delay(10); 
    
   if ( menuState && !setItemState ) { // HIGH LOW
     // scroll through menu items
@@ -236,7 +205,7 @@ void loop() {
     }
     if ( verbose ) {
       Serial.print("encoder: " + String(clickCounter) + " last encoder: " + String(clickCounterLast) + " menu: " + String(menuPos));
-      Serial.println(" menu: " + String(menuState) + " setItem: " + String(setItemState) + " rootItem: " + String(rootItemState));
+      Serial.println(" menu: " + String(menuState) + " setItem: " + String(setItemState));
     }
   } else if ( menuState && setItemState ) { // HIGH HIGH
     // scroll through menu item settings
@@ -401,7 +370,7 @@ void loop() {
     
     if ( verbose ) {
       Serial.print("encoder: " + String(clickCounter) + " last encoder: " + String(clickCounterLast) + " menu: " + String(menuPos));
-      Serial.print(" menu: " + String(menuState) + " setItem: " + String(setItemState) + " rootItem: " + String(rootItemState));
+      Serial.print(" menu: " + String(menuState) + " setItem: " + String(setItemState));
       Serial.print(" brt: " + String(Settings.brightness,HEX) + 
         " enab: " + String(Settings.enable_rpm,DEC) +
         " shft: " + String(Settings.shift_rpm,DEC) +
@@ -415,14 +384,13 @@ void loop() {
 //      lastencoder0Pos = encoder0Pos;
       if ( verbose ) {
         Serial.print("encoder: " + String(clickCounter) + " last encoder: " + String(clickCounterLast) + " menu: " + String(menuPos));
-        Serial.println(" menu: " + String(menuState) + " setItem: " + String(setItemState) + " rootItem: " + String(rootItemState));
+        Serial.println(" menu: " + String(menuState) + " setItem: " + String(setItemState));
       }
   }
 
   if ( menuState && !setItemState ) {
     switch (menuPos) {
       case 0:
-        rootItemState = true;
         //displaybuffer[0] = 0x39;
         //displaybuffer[1] = 0x9;
         //displaybuffer[2] = 0x9;
@@ -434,7 +402,6 @@ void loop() {
         blackout();
         break;
       case 1:
-        rootItemState = false;
         String("Brt ").toCharArray(displaybuffer,5);
         alpha4print();
         /*
@@ -444,42 +411,34 @@ void loop() {
         */
         break;
       case 2:
-        rootItemState = false;
         String("Enbl").toCharArray(displaybuffer,5);
         alpha4print();
         break;
       case 3:
-        rootItemState = false;
         String("Shft").toCharArray(displaybuffer,5);
         alpha4print();
         break;
       case 4:
-        rootItemState = false;
         String("Col1").toCharArray(displaybuffer,5);
         alpha4print();
         break;
       case 5:
-        rootItemState = false;
         String("Col2").toCharArray(displaybuffer,5);
         alpha4print();
         break;
       case 6:
-        rootItemState = false;
         String("Col3").toCharArray(displaybuffer,5);
         alpha4print();
         break;
       case 7:
-        rootItemState = false;
         String("SC 1").toCharArray(displaybuffer,5);
         alpha4print();
         break;
       case 8:
-        rootItemState = false;
         String("SC 2").toCharArray(displaybuffer,5);
         alpha4print();
         break;
       case 9:
-        rootItemState = true;
         //alpha4.writeDigitRaw(0, 0x39);
         //alpha4.writeDigitRaw(1, 0x9);
         //alpha4.writeDigitRaw(2, 0x9);
@@ -734,26 +693,33 @@ void button()
   {
     // basically you can either be in the top level menu that lists your parameters
     // or you can be in the menu for one of the parameters
-    // state 1: tach mode + button press = shift to state 2 (menu)
-    // state 2a: menu + special parameter + button press = shift to state 1 (go back to tach)
-    // state 2b: menu + parameter + button press = shift to state 3 (set parameter)
-    // state 3: set parameter + button press = save parameter + back to state 2a
-    if ( menuState && setItemState && !rootItemState ) { // HIGH HIGH LOW
+    // state 0: tach mode menuState false, setItemState should also be false
+    // state 1: tach mode + button press => menuState true (in the menu system)
+    // state 2: in menu + button press => setItemState true (configuring an item)
+    // state 3: in setItemState + button press => setItemState false
+
+    // special condition for state 2, postion 0 just reset states to false (exit)
+    // special condition for state 2, position 9 reset states to false, save config, exit
+
+    if ( menuState && setItemState ) { // in menu and setting
       // button press here should write to EEPROM
       // then move back to menu item selection
       lastSetItemState = setItemState;
       setItemState = false;
-      //if ( ok )
-      saveConfig();
-      blackout();
-    } else if ( menuState && !setItemState && !rootItemState ) { // HIGH LOW LOW
+      // special if we are at the beginning or end
+      if ( menuPos == 0 ) { // exit
+        menuState = false;
+      } else if ( menuPos == 9 ) { // save and exit
+        menuState = false;
+        saveConfig();
+        rainbow(5);
+        delay(100);
+        blackout();
+      }
+    } else if ( menuState && !setItemState ) { // in menu, not setting a param yet
       // we are at a menu item that we want to set
       lastSetItemState = setItemState;
       setItemState = true;
-    } else if ( menuState && !setItemState && rootItemState ) { // HIGH LOW HIGH
-      // we are at the menu root and need to get out of the menu
-      lastMenuState = menuState;
-      menuState = false;
     } else {
       lastMenuState = menuState;
       menuState = true;
@@ -785,7 +751,7 @@ bool loadConfig() {
   if ( verbose ) {
 //    Serial.print("encoder: " + String(encoder0Pos) + " last encoder: " + String(lastencoder0Pos) + " menu: " + String(menuPos));
     Serial.print(" menu: " + String(menuPos));
-    Serial.print(" menu: " + String(menuState) + " setItem: " + String(setItemState) + " rootItem: " + String(rootItemState));
+    Serial.print(" menu: " + String(menuState) + " setItem: " + String(setItemState));
     Serial.print(" brt: " + String(Settings.brightness,HEX) + 
         " enab: " + String(Settings.enable_rpm,DEC) +
         " shft: " + String(Settings.shift_rpm,DEC) +
@@ -811,9 +777,6 @@ void saveConfig() {
 
 void tachIsr() 
 { 
-  unsigned long now = micros(); 
-  interval = now - lastPulseTime; 
-  lastPulseTime = now; 
-  timeoutCounter = timeoutValue; 
+  rev++; 
 } 
 
