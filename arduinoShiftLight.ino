@@ -1,6 +1,7 @@
 // hopefully no global vars
 bool ok = true;
 bool verbose = true;
+bool smoothing = true;
 
 // eeprom
 #include <EEPROMex.h>
@@ -8,6 +9,7 @@ bool verbose = true;
 #define MEMORY_BASE 32
 int configAddress = 0;
 
+// Thank you AdaFruit!
 // neopixel
 #include <Adafruit_NeoPixel.h>
 #include <avr/power.h>
@@ -15,8 +17,16 @@ int configAddress = 0;
 #include <Wire.h>
 #include "Adafruit_LEDBackpack.h"
 #include "Adafruit_GFX.h"
-// rotary encoder
+
+// Thank you buxtronix!
+// http://www.buxtronix.net/2011/10/rotary-encoders-done-properly.html
+// https://github.com/buxtronix/arduino/tree/master/libraries/Rotaryc
 #include <Rotary.h>
+
+// Thank you Brian Park!
+// https://github.com/bxparks/AceButton
+#include <AceButton.h>
+using namespace ace_button;
 
 //SettingsStruct Settings;
 struct SettingsStruct {
@@ -42,13 +52,14 @@ struct SettingsStruct {
 // Parameter 3 = pixel type flags, add together as needed:
 //   NEO_KHZ800  800 KHz bitstream (most NeoPixel products w/WS2812 LEDs)
 //   NEO_GRB     Pixels are wired for GRB bitstream (mtost NeoPixel products)
-Adafruit_NeoPixel strip = Adafruit_NeoPixel(16, NEO_PIN, NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel strip = Adafruit_NeoPixel(32, NEO_PIN, NEO_GRB + NEO_KHZ800);
 
 // IMPORTANT: To reduce NeoPixel burnout risk, add 1000 uF capacitor across
 // pixel power leads, add 300 - 500 Ohm resistor on first pixel's data input
 // and minimize distance between Arduino and first pixel.  Avoid connecting
 // on a live circuit...if you must, connect GND first.
 
+// alpha4 is on I2C
 Adafruit_AlphaNum4 alpha4 = Adafruit_AlphaNum4();
 //char displaybuffer[5] = {' ', ' ', ' ', ' ', ' '};
 char displaybuffer[5] = "0000";
@@ -60,10 +71,11 @@ int clickCounter = 0;
 int clickCounterLast = 0; 
 
 // button on rotary encoder
-#define buttonPin 7
+#define buttonPin 8
+AceButton button(buttonPin);
+void handleEvent(AceButton*, uint8_t, uint8_t);
+
 // stuff for rotary encoder on interrupts
-// http://www.buxtronix.net/2011/10/rotary-encoders-done-properly.html
-// https://github.com/buxtronix/arduino/tree/master/libraries/Rotary
 #define encoder0PinA 0 // int 2 is pin 0 in micro
 #define encoder0PinB 1 // int 3 is pin 1 in micro
 /*
@@ -83,14 +95,40 @@ boolean lastSetItemState = false;
 volatile int setItemPos = 0;
 
 //configuration for the Tachometer variables 
-#define tachPin 3 
-int rpm; 
-int rpmLast = 3000; 
-float revValue = 0;
-float rev = 0;
-int oldTime = 0;
-int time;
+#include <FreqMeasure.h>
+#define tachPin 7
+int senseoption = 2; // either 1 or 2. 1 == interrupt, 2 == freq counter. chippernut defaults to 2
+int cal = 30; // chippernut uses 30 by default
+int justfixed = 0;
+volatile unsigned long lastPulseTime;
+volatile unsigned long interval = 0;
+volatile int timeoutCounter; 
+volatile int timeoutValue;
+long rpm; 
+long revs;
+long rpm_last; 
+//long displayRpm;
+//long previousTime;
+long previousMillis = 0;
 
+const int numReadings = 5;
+int rpmArray[numReadings] = {0, 0, 0, 0, 0};
+int index = 0;
+long total = 0;
+long average = 0;
+
+//int rpmLast = 3000; 
+//float revValue = 0;
+//float rev = 0;
+//int oldTime = 0;
+//int time;
+//const unsigned long sampleTime = 50;
+//const int cylinderDivider = 2; // 4cyl fires twice per crank revolution
+//#define counterFreq 10000 // for measuring the RPM.  The input signal is the gate
+//volatile int tachCounter = 0;
+//volatile int mytachCounter = 0;
+//volatile boolean newRpmData = false;
+//int timer1_counter;
 
 void setup() {
   Serial.begin(115200);
@@ -119,6 +157,8 @@ void setup() {
   //  delay(10);
   //}
   alpha4DashChase();
+  String("boot").toCharArray(displaybuffer,5);
+  alpha4print();
   delay(100);
     
   // neopixel setup
@@ -148,7 +188,9 @@ void setup() {
 //  delay(10);
   
   // button setup
-  attachInterrupt(digitalPinToInterrupt(buttonPin), button, RISING);
+  //attachInterrupt(digitalPinToInterrupt(buttonPin), button, RISING);
+  pinMode(buttonPin, INPUT_PULLUP);
+  button.setEventHandler(handleEvent);
   
   // rotary encoder setup
   pinMode(encoder0PinA, INPUT_PULLUP); 
@@ -159,7 +201,32 @@ void setup() {
   // config for the Tach 
   pinMode(tachPin, INPUT); 
   // digitalWrite(sensorPin, HIGH); // enable internal pullup (if Hall sensor needs it) 
-  attachInterrupt(digitalPinToInterrupt(tachPin), tachIsr, RISING); 
+  switch (senseoption){
+    case 1:
+      attachInterrupt(digitalPinToInterrupt(tachPin), sensorIsr, RISING); 
+      break;
+    case 2: 
+      FreqMeasure.begin();
+    break;  
+  }
+  //revs = 0;
+  //rpm = 0;
+  //displayRpm = 0;
+  //previousTime = 0;
+  /*
+  //~~~~~~~~~~~~~~~~~~~~***************** Timer 1 Configuration *****************~~~~~~~~~~~~~~~~~~~~~
+  cli();  // disable interrupts
+  TCCR1A = 0;
+  TCCR1B = 0;
+  // example calculation: timer1_counter = 65536 - ( 16MHz/pre-scaler/4Hz) = 65536 - 15625 = 49911
+  timer1_counter =  65536 - ( 250000 / counterFreq);
+
+  TCNT1 = timer1_counter;   // preload timer
+  TCCR1B |= ((1 << CS10) | (1 << CS11));    // 64 prescaler 
+  TIMSK1 |= (1 << TOIE1);   // enable timer overflow interrupt
+  //~~~~~~~~~~~~~~~~~~~~***************** Timer 1 Configuration *****************~~~~~~~~~~~~~~~~~~~~~
+  sei();  //  global interrupt enable
+  */
 }
 
 
@@ -174,25 +241,110 @@ void loop() {
    * 
    * 
    */
+   // this should either display or count rpm
+   switch (senseoption){
+    case 1:
+      rpm = long(60e7/cal)/(float)interval;
+      break;
+    case 2: 
+      if (FreqMeasure.available()) {
+        rpm = (600/cal)* FreqMeasure.countToFrequency(FreqMeasure.read());
+        timeoutCounter = timeoutValue;
+      }
+    break;  
+  }
+  // this looks like controlling hysteresis
+  // don't count if less than +/- 20%, more than zero, fixed less than 3 times
+  if (((rpm > (rpm_last +(rpm_last*.2))) || (rpm < (rpm_last - (rpm_last*.2)))) && (rpm_last > 0) && (justfixed < 3)){
+        rpm = rpm_last; // don't count the change
+        justfixed++;
+        if(verbose){Serial.print("FIXED!  ");}
+        if(verbose){Serial.println(rpm_last);}         
+      
+  } else {
+    rpm_last = rpm;
+    justfixed--;
+    if (justfixed <= 0){justfixed = 0;}
+  }
+  // average out rpm over numReadings
+  if (smoothing){
+    total = total - rpmArray[index]; 
+    rpmArray[index] = rpm;
+    total = total + rpmArray[index]; 
+    index = index + 1;   
+    if (index >= numReadings){              
+      index = 0;    
+    }                       
+    average = total / numReadings; 
+    if(verbose){Serial.print("average: ");
+    Serial.println(average);}
+    rpm = average;       
+  }
 
-  // tachometer routine
-  // detach interrupt while doing sensitive maths
-  detachInterrupt(digitalPinToInterrupt(tachPin));
-  time = millis() - oldTime;        //finds the time 
-  rpm = (rev / time) * 60000;         //calculates rpm
-  oldTime = millis();             //saves the current time
-  rev = 0;
-  attachInterrupt(digitalPinToInterrupt(tachPin), tachIsr, RISING);
-  rpm = constrain (rpm, 0, 9999); 
-  // given the nature of the RPM interrupt reader, a zero reading will produce a max result 
-  // this fixes this quirk 
-  Serial.println(rpm); 
-  //String(rpm).toCharArray(displaybuffer,5);
-  snprintf(displaybuffer, sizeof(displaybuffer), "%04d", rpm);
-  alpha4print(); 
-  delay(10); 
-   
-  if ( menuState && !setItemState ) { // HIGH LOW
+  // polling for a button press
+  button.check();
+  if ( !menuState ) {
+    // tachometer routine
+    // detach interrupt while doing sensitive maths
+    //detachInterrupt(digitalPinToInterrupt(tachPin));
+    //time = millis() - oldTime;        //finds the time 
+    //rpm = (rev / time) * 60000;         //calculates rpm
+    //oldTime = millis();             //saves the current time
+    //rev = 0;
+    //attachInterrupt(digitalPinToInterrupt(tachPin), tachIsr, RISING);
+    
+    // we want to display based on three bands
+    // starting at Settings.enable_rpm;
+    // ending at Settings.shift_rpm;
+    // (Settings.shift_rpm - Settings.enable_rpm) / 3
+    // (5500 - 1500 ) / 3 = 4000 / 3 = 1333.3333
+    // rpmInterval = (Settings.shift_rpm - Settings.enable_rpm) / 3
+    // rpmC1 = Settings.enable_rpm + rpmInterval
+    // C1 1500 to < rpmC1
+    // rpmC2 = Settings.enable_rpm + ( rpmInterval * 2)
+    // C2  >= rpmC1 to < rpmC2
+    // C3 >= rpmC2 to < Settings.shift_rpm
+    // >= Settings.shift_rpm 
+    // in three bands, one for each color
+    //if ( rpm < shift_rpm ) {
+    /*
+    if ( newRpmData ) {
+      rpm = getRpm();
+      rpm = constrain (rpm, 0, 9999); 
+      // given the nature of the RPM interrupt reader, a zero reading will produce a max result 
+      // this fixes this quirk 
+      Serial.println(rpm); 
+      //String(rpm).toCharArray(displaybuffer,5);
+      snprintf(displaybuffer, sizeof(displaybuffer), "%04d", rpm);
+      alpha4print(); 
+      delay(10); // not sure if we really need to delay here, would need to time how long everything else takes to process
+    }
+    */
+    Serial.println("revs: " + String(revs) + " rpmArray[index]: " + String(rpmArray[index]) + " total: " + String(total) + " index: " + String(index) + " average: " + String(average)); 
+    //detachInterrupt(digitalPinToInterrupt(tachPin));
+    //rpm = revs * 60000 / (millis() - previousTime);
+    //previousTime = millis();
+    //revs = 0;
+    //attachInterrupt(digitalPinToInterrupt(tachPin), tachInterrupt, RISING);
+    //total = total - rpmArray[index];
+    //rpmArray[index] = rpm;
+    //total = total + rpmArray[index];
+    //++index;
+    //if ( index > numReadings ) {
+    //  index = 0;
+    //}
+    //displayRpm = total / numReadings;
+    //displayRpm = average;
+    //displayRpm = constrain (displayRpm, 0, 9999); 
+    // given the nature of the RPM interrupt reader, a zero reading will produce a max result 
+    // this fixes this quirk 
+    Serial.println("rpm: " + String(rpm) + " rpmArray[index]: " + String(rpmArray[index]) + " total: " + String(total) + " index: " + String(index) + " average: " + String(average)); 
+    //String(rpm).toCharArray(displaybuffer,5);
+    snprintf(displaybuffer, sizeof(displaybuffer), "%04d", rpm);
+    alpha4print(); 
+    delay(250);
+    
+  } else if ( menuState && !setItemState ) { // HIGH LOW
     // scroll through menu items
     if ( clickCounter > clickCounterLast && menuPos < 9 ) {
       ++menuPos;
@@ -252,24 +404,12 @@ void loop() {
         alpha4print();
         break;
       case 3: // shift rpm
-        /*
-        if ( encoder0Pos > lastencoder0Pos && mySettings[menuPos] <= 9800) {
-          mySettings[menuPos] += 100;
-        } else if ( encoder0Pos < lastencoder0Pos && mySettings[menuPos] > mySettings[SHIFTLIGHT_ENABLE_RPM] ) {
-          mySettings[menuPos] -= 100;
-        }
-        */
         if ( clickCounter > clickCounterLast && Settings.shift_rpm <= 9800 ) {
           Settings.shift_rpm += 100;
         } else if ( clickCounter < clickCounterLast && Settings.shift_rpm > Settings.enable_rpm ) {
           Settings.shift_rpm -= 100;
         }
-  clickCounterLast = clickCounter;
-
-        // lastencoder0Pos = encoder0Pos;
-        // print rpm on quadalpha
-        //String(mySettings[menuPos]).toCharArray(displaybuffer,5);
-        //String(Settings.shift_rpm).toCharArray(displaybuffer,5);
+        clickCounterLast = clickCounter;
         snprintf(displaybuffer, sizeof(displaybuffer), "%04d", Settings.shift_rpm);
         alpha4print();
         break;
@@ -281,10 +421,7 @@ void loop() {
         }
         if ( Settings.brightness < 8 ) { Settings.brightness = 252; }
         if ( Settings.brightness > 252 ) { Settings.brightness = 8; }
-        // lastencoder0Pos = encoder0Pos
-          clickCounterLast = clickCounter;
-
-        //String(Settings.color_primary).toCharArray(displaybuffer,5);
+        clickCounterLast = clickCounter;
         snprintf(displaybuffer, sizeof(displaybuffer), "%04d", Settings.color_primary);
         alpha4print();
         colorFill(Wheel(Settings.color_primary),Settings.brightness);
@@ -297,10 +434,7 @@ void loop() {
         }
         if ( Settings.brightness < 8 ) { Settings.brightness = 252; }
         if ( Settings.brightness > 252 ) { Settings.brightness = 8; }
-          clickCounterLast = clickCounter;
-
-        // lastencoder0Pos = encoder0Pos;
-        //String(Settings.color_secondary).toCharArray(displaybuffer,5);
+        clickCounterLast = clickCounter;
         snprintf(displaybuffer, sizeof(displaybuffer), "%04d", Settings.color_secondary);
         alpha4print();
         colorFill(Wheel(Settings.color_secondary),Settings.brightness);
@@ -313,10 +447,7 @@ void loop() {
         }
         if ( Settings.brightness < 8 ) { Settings.brightness = 252; }
         if ( Settings.brightness > 252 ) { Settings.brightness = 8; }
-          clickCounterLast = clickCounter;
-
-        // lastencoder0Pos = encoder0Pos;
-        //String(Settings.color_tertiary).toCharArray(displaybuffer,5);
+        clickCounterLast = clickCounter;
         snprintf(displaybuffer, sizeof(displaybuffer), "%04d", Settings.color_tertiary);
         alpha4print();
         colorFill(Wheel(Settings.color_tertiary),Settings.brightness);
@@ -329,10 +460,7 @@ void loop() {
         }
         if ( Settings.brightness < 8 ) { Settings.brightness = 252; }
         if ( Settings.brightness > 252 ) { Settings.brightness = 8; }
-          clickCounterLast = clickCounter;
-
-        // lastencoder0Pos = encoder0Pos;
-        //String(Settings.color_shift_primary).toCharArray(displaybuffer,5);
+        clickCounterLast = clickCounter;
         snprintf(displaybuffer, sizeof(displaybuffer), "%04d", Settings.color_shift_primary);
         alpha4print();
         colorFill(Wheel(Settings.color_shift_primary),Settings.brightness);
@@ -345,26 +473,13 @@ void loop() {
         }
         if ( Settings.brightness < 8 ) { Settings.brightness = 252; }
         if ( Settings.brightness > 252 ) { Settings.brightness = 8; }
-          clickCounterLast = clickCounter;
-
-        // lastencoder0Pos = encoder0Pos;
-        //String(Settings.color_shift_secondary).toCharArray(displaybuffer,5);
+        clickCounterLast = clickCounter;
         snprintf(displaybuffer, sizeof(displaybuffer), "%04d", Settings.color_shift_secondary);
         alpha4print();
         colorFill(Wheel(Settings.color_shift_secondary),Settings.brightness);
         break;
       default: // brightness and colors
         clickCounterLast = clickCounter;
-
-        /*
-        if ( encoder0Pos > lastencoder0Pos && mySettings[menuPos] < 251) {
-          mySettings[menuPos] += 4;
-        } else if ( encoder0Pos < lastencoder0Pos && mySettings[menuPos] > 0 ) {
-          mySettings[menuPos] -= 4;
-        }
-        lastencoder0Pos = encoder0Pos;
-        colorFill(Wheel(mySettings[menuPos]),mySettings[SHIFTLIGHT_BRIGHTNESS]);
-        */
         break;
     }
     
@@ -381,7 +496,6 @@ void loop() {
         " sft2: " + String(Settings.color_shift_secondary,HEX));
     }
   } else {
-//      lastencoder0Pos = encoder0Pos;
       if ( verbose ) {
         Serial.print("encoder: " + String(clickCounter) + " last encoder: " + String(clickCounterLast) + " menu: " + String(menuPos));
         Serial.println(" menu: " + String(menuState) + " setItem: " + String(setItemState));
@@ -439,12 +553,6 @@ void loop() {
         alpha4print();
         break;
       case 9:
-        //alpha4.writeDigitRaw(0, 0x39);
-        //alpha4.writeDigitRaw(1, 0x9);
-        //alpha4.writeDigitRaw(2, 0x9);
-        //alpha4.writeDigitRaw(3, 0xF);
-        //alpha4.writeDisplay();
-        //blackout();
         String("SAVE").toCharArray(displaybuffer,5);
         alpha4print();
         blackout();
@@ -683,50 +791,46 @@ void alpha4DashChase() {
 //
 // Button function
 //
+void handleEvent(AceButton* /* button */, uint8_t eventType, uint8_t /* buttonState */) {
+  switch (eventType) {
+    case AceButton::kEventReleased:
+      // basically you can either be in the top level menu that lists your parameters
+      // or you can be in the menu for one of the parameters
+      // state 0: tach mode menuState false, setItemState should also be false
+      // state 1: tach mode + button press => menuState true (in the menu system)
+      // state 2: in menu + button press => setItemState true (configuring an item)
+      // state 3: in setItemState + button press => setItemState false
 
-void button()
-{
-  static unsigned long last_interrupt_time = 0;
-  unsigned long interrupt_time = millis();
-  // If interrupts come faster than 50ms, assume it's a bounce and ignore
-  if (interrupt_time - last_interrupt_time > 200) 
-  {
-    // basically you can either be in the top level menu that lists your parameters
-    // or you can be in the menu for one of the parameters
-    // state 0: tach mode menuState false, setItemState should also be false
-    // state 1: tach mode + button press => menuState true (in the menu system)
-    // state 2: in menu + button press => setItemState true (configuring an item)
-    // state 3: in setItemState + button press => setItemState false
+      // special condition for state 2, postion 0 just reset states to false (exit)
+      // special condition for state 2, position 9 reset states to false, save config, exit
 
-    // special condition for state 2, postion 0 just reset states to false (exit)
-    // special condition for state 2, position 9 reset states to false, save config, exit
-
-    if ( menuState && setItemState ) { // in menu and setting
-      // button press here should write to EEPROM
-      // then move back to menu item selection
-      lastSetItemState = setItemState;
-      setItemState = false;
-      // special if we are at the beginning or end
-      if ( menuPos == 0 ) { // exit
-        menuState = false;
-      } else if ( menuPos == 9 ) { // save and exit
-        menuState = false;
-        saveConfig();
-        rainbow(5);
-        delay(100);
-        blackout();
+      if ( menuState && setItemState ) { // in menu and setting
+       // button press here should write to EEPROM
+        // then move back to menu item selection
+        lastSetItemState = setItemState;
+        setItemState = false;
+        // special if we are at the beginning or end
+        if ( menuPos == 0 ) { // exit
+          menuState = false;
+        } else if ( menuPos == 9 ) { // save and exit
+          menuState = false;
+          saveConfig();
+          rainbow(5);
+          delay(100);
+          blackout();
+        }
+      } else if ( menuState && !setItemState ) { // in menu, not setting a param yet
+        // we are at a menu item that we want to set
+        lastSetItemState = setItemState;
+        setItemState = true;
+      } else {
+        lastMenuState = menuState;
+        menuState = true;
       }
-    } else if ( menuState && !setItemState ) { // in menu, not setting a param yet
-      // we are at a menu item that we want to set
-      lastSetItemState = setItemState;
-      setItemState = true;
-    } else {
-      lastMenuState = menuState;
-      menuState = true;
-    }
+      break;
   }
-  last_interrupt_time = interrupt_time;
 }
+
 
 // rotate is called anytime the rotary inputs change state.
 void rotate() {
@@ -743,6 +847,8 @@ bool loadConfig() {
     delay(1000);
     Serial.println("      read settings from EEPROM    ");
   }
+  String("----").toCharArray(displaybuffer,5);
+  alpha4print();
   EEPROM.readBlock(configAddress,Settings);
   if ( Settings.enable_rpm > 9000 ) // insurance. if unset this will be max unsigned int
     Settings.enable_rpm = 6500;
@@ -761,22 +867,93 @@ bool loadConfig() {
         " sft1: " + String(Settings.color_shift_primary,HEX) +
         " sft2: " + String(Settings.color_shift_secondary,HEX));
   }
+  String("____").toCharArray(displaybuffer,5);
+  alpha4print();
   return (Settings.version == CONFIG_VERSION);
 }
 
 void saveConfig() {
   if ( verbose )
     Serial.println("      write settings to EEPROM     ");
+  String("____").toCharArray(displaybuffer,5);
+  alpha4print();
   EEPROM.writeBlock(configAddress,Settings);
   if ( verbose ) {
     delay(1000);
     ok = loadConfig();
     delay(1000);
   }
+  String("----").toCharArray(displaybuffer,5);
+  alpha4print();
 }
 
-void tachIsr() 
+void tachInterrupt() 
 { 
-  rev++; 
+  revs++; 
 } 
+
+void sensorIsr() 
+{ 
+  unsigned long now = micros(); 
+  interval = now - lastPulseTime; 
+  lastPulseTime = now; 
+  timeoutCounter = timeoutValue; 
+} 
+
+/*
+int getRPM()
+{
+  int count = 0;
+  boolean countFlag = LOW;
+  unsigned long currentTime = 0;
+  unsigned long startTime = millis();
+  while (currentTime <= sampleTime)
+  {
+    if (digitalRead(tachPin) == HIGH)
+    {
+      countFlag = HIGH;
+    }
+    if (digitalRead(tachPin) == LOW && countFlag == HIGH)
+    {
+      count++;
+      countFlag=LOW;
+    }
+    currentTime = millis() - startTime;
+  }
+  int countRpm = int(60000/float(sampleTime))*count;
+  return countRpm;
+}
+*/
+
+/*
+// Tach signal input triggers this interrupt vector on the falling edge of pin 2
+void tachInterrupt()
+{
+  mytachCounter = tachCounter;
+  tachCounter = 0;
+  newRpmData = true;
+  //digitalWrite(systemLedPin, !digitalRead( systemLedPin )); // toggle LED
+}
+
+
+ISR(TIMER1_OVF_vect)        
+{
+  TCNT1 = timer1_counter;   // preload timer
+  tachCounter++;
+
+   // clamp for when engine is stopped
+   //if( tachCounter = 65535 )
+    //tachCounter = 0;
+    
+  //digitalWrite(systemLedPin, !digitalRead( systemLedPin ));  // Toggle LED
+
+}
+
+float getRpm()
+{
+  newRpmData = false;
+  int Hz = counterFreq / mytachCounter;  // Because the ISR is called @ counterFreq Hz
+  return ( Hz - 0.033333 ) / 0.033333;
+}
+*/
 
