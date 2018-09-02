@@ -1,7 +1,7 @@
 // hopefully no global vars
 bool ok = true;
 bool verbose = true;
-bool smoothing = true;
+bool smoothing = false;
 
 // eeprom
 #include <EEPROMex.h>
@@ -69,6 +69,8 @@ char displaybuffer[5] = "0000";
 Rotary rotary = Rotary(0,1);
 int clickCounter = 0;
 int clickCounterLast = 0; 
+int fakeRpmCounter = 0;
+int fakeRpmCounterLast = 0;
 
 // button on rotary encoder
 #define buttonPin 8
@@ -97,14 +99,14 @@ volatile int setItemPos = 0;
 //configuration for the Tachometer variables 
 #include <FreqMeasure.h>
 #define tachPin 7
-int senseoption = 2; // either 1 or 2. 1 == interrupt, 2 == freq counter. chippernut defaults to 2
+int senseoption = 3; // either 1 or 2. 1 == interrupt, 2 == freq counter. chippernut defaults to 2
 int cal = 30; // chippernut uses 30 by default
 int justfixed = 0;
 volatile unsigned long lastPulseTime;
 volatile unsigned long interval = 0;
 volatile int timeoutCounter; 
 volatile int timeoutValue;
-long rpm; 
+long rpm = 1000; 
 long revs;
 long rpm_last; 
 //long displayRpm;
@@ -129,6 +131,7 @@ long average = 0;
 //volatile int mytachCounter = 0;
 //volatile boolean newRpmData = false;
 //int timer1_counter;
+bool fakeRPM = false;
 
 void setup() {
   Serial.begin(115200);
@@ -234,6 +237,7 @@ void setup() {
  * MAIN 
  */
 void loop() {  
+  delay(10);
   /*
    * 
    * 
@@ -251,10 +255,28 @@ void loop() {
         rpm = (600/cal)* FreqMeasure.countToFrequency(FreqMeasure.read());
         timeoutCounter = timeoutValue;
       }
-    break;  
+      break;
+    case 3:
+      if ( fakeRpmCounter > fakeRpmCounterLast && fakeRPM == true ) {
+        rpm += 100;
+        fakeRpmCounterLast = fakeRpmCounter;
+      } else if ( fakeRpmCounter < fakeRpmCounterLast && fakeRPM == true ) {
+        rpm -= 100;
+        fakeRpmCounterLast = fakeRpmCounter;
+      }
+      if ( rpm > 8100 ) {
+        rpm = 8000;
+        fakeRpmCounterLast = fakeRpmCounter;
+      }
+      if ( rpm < 400 ) {
+        rpm = 500;
+        fakeRpmCounterLast = fakeRpmCounter;
+      }
+      break;  
   }
   // this looks like controlling hysteresis
   // don't count if less than +/- 20%, more than zero, fixed less than 3 times
+/*
   if (((rpm > (rpm_last +(rpm_last*.2))) || (rpm < (rpm_last - (rpm_last*.2)))) && (rpm_last > 0) && (justfixed < 3)){
         rpm = rpm_last; // don't count the change
         justfixed++;
@@ -266,6 +288,7 @@ void loop() {
     justfixed--;
     if (justfixed <= 0){justfixed = 0;}
   }
+  */
   // average out rpm over numReadings
   if (smoothing){
     total = total - rpmArray[index]; 
@@ -338,22 +361,20 @@ void loop() {
     //displayRpm = constrain (displayRpm, 0, 9999); 
     // given the nature of the RPM interrupt reader, a zero reading will produce a max result 
     // this fixes this quirk 
-    Serial.println("rpm: " + String(rpm) + " rpmArray[index]: " + String(rpmArray[index]) + " total: " + String(total) + " index: " + String(index) + " average: " + String(average)); 
+    ///////Serial.println("rpm: " + String(rpm) + " rpmArray[index]: " + String(rpmArray[index]) + " total: " + String(total) + " index: " + String(index) + " average: " + String(average)); 
     //String(rpm).toCharArray(displaybuffer,5);
     snprintf(displaybuffer, sizeof(displaybuffer), "%04d", rpm);
     alpha4print(); 
-    delay(250);
+    //delay(250);
     
   } else if ( menuState && !setItemState ) { // HIGH LOW
     // scroll through menu items
-    if ( clickCounter > clickCounterLast && menuPos < 9 ) {
-      ++menuPos;
-        clickCounterLast = clickCounter;
-
-    } else if ( clickCounter < clickCounterLast && menuPos > 0 ) {
-      --menuPos;
-        clickCounterLast = clickCounter;
-
+    if ( clickCounter > clickCounterLast && menuPos <= 10 ) {
+      menuPos++;
+      clickCounterLast = clickCounter;
+    } else if ( clickCounter < clickCounterLast && menuPos >= 1 ) {
+      menuPos--;
+      clickCounterLast = clickCounter;
     }
     if ( verbose ) {
       Serial.print("encoder: " + String(clickCounter) + " last encoder: " + String(clickCounterLast) + " menu: " + String(menuPos));
@@ -478,6 +499,18 @@ void loop() {
         alpha4print();
         colorFill(Wheel(Settings.color_shift_secondary),Settings.brightness);
         break;
+      case 9: // fake rpm
+        if ( clickCounter > clickCounterLast ) {
+          fakeRPM = true;
+          String("Yep ").toCharArray(displaybuffer,5);
+          alpha4print();
+          clickCounterLast = clickCounter;
+        } else if (clickCounter < clickCounterLast ) {
+          fakeRPM = false;
+          String("Nope").toCharArray(displaybuffer,5);
+          alpha4print();
+          clickCounterLast = clickCounter;
+        }
       default: // brightness and colors
         clickCounterLast = clickCounter;
         break;
@@ -553,6 +586,10 @@ void loop() {
         alpha4print();
         break;
       case 9:
+        String("Fake").toCharArray(displaybuffer,5);
+        alpha4print();
+        break;
+      case 10:
         String("SAVE").toCharArray(displaybuffer,5);
         alpha4print();
         blackout();
@@ -812,7 +849,7 @@ void handleEvent(AceButton* /* button */, uint8_t eventType, uint8_t /* buttonSt
         // special if we are at the beginning or end
         if ( menuPos == 0 ) { // exit
           menuState = false;
-        } else if ( menuPos == 9 ) { // save and exit
+        } else if ( menuPos == 10 ) { // save and exit
           menuState = false;
           saveConfig();
           rainbow(5);
@@ -837,8 +874,10 @@ void rotate() {
   unsigned char result = rotary.process();
   if (result == DIR_CW) {
     clickCounter--;
+    fakeRpmCounter--;
   } else if (result == DIR_CCW) {
     clickCounter++;
+    fakeRpmCounter++;
   }
 }
 
