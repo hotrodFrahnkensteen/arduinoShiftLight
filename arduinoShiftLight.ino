@@ -1,7 +1,8 @@
-// hopefully no global vars
+// magic vars
 bool ok = true;
 bool verbose = true;
 bool smoothing = false;
+bool tachDisplay = true;
 
 // eeprom
 #include <EEPROMex.h>
@@ -43,16 +44,17 @@ struct SettingsStruct {
 } Settings = {
   CONFIG_VERSION,
   0x7F, 0xDAC, 0x1D4C, 0x50, 0x38, 0xC, 0xFC, 0xE0
-// 127,  3500,   7500, colors
+  // 127,  3500,   7500, colors
 };
 
 #define NEO_PIN 5
+int numPixels = 32;
 // Parameter 1 = number of pixels in strip
 // Parameter 2 = Arduino pin number (most are valid)
 // Parameter 3 = pixel type flags, add together as needed:
 //   NEO_KHZ800  800 KHz bitstream (most NeoPixel products w/WS2812 LEDs)
-//   NEO_GRB     Pixels are wired for GRB bitstream (mtost NeoPixel products)
-Adafruit_NeoPixel strip = Adafruit_NeoPixel(32, NEO_PIN, NEO_GRB + NEO_KHZ800);
+//   NEO_GRB     Pixels are wired for GRB bitstream (most NeoPixel products)
+Adafruit_NeoPixel strip = Adafruit_NeoPixel(numPixels, NEO_PIN, NEO_GRB + NEO_KHZ800);
 
 // IMPORTANT: To reduce NeoPixel burnout risk, add 1000 uF capacitor across
 // pixel power leads, add 300 - 500 Ohm resistor on first pixel's data input
@@ -66,9 +68,9 @@ char displaybuffer[5] = "0000";
 
 // rotary encoder
 // outputs on pins 0 and 1
-Rotary rotary = Rotary(0,1);
+Rotary rotary = Rotary(0, 1);
 int clickCounter = 0;
-int clickCounterLast = 0; 
+int clickCounterLast = 0;
 int fakeRpmCounter = 0;
 int fakeRpmCounterLast = 0;
 
@@ -81,10 +83,10 @@ void handleEvent(AceButton*, uint8_t, uint8_t);
 #define encoder0PinA 0 // int 2 is pin 0 in micro
 #define encoder0PinB 1 // int 3 is pin 1 in micro
 /*
- * volatile int encoder0Pos = 0;
- * volatile int lastencoder0Pos = 0;
- * #define readA bitRead(PIND,2)//faster than digitalRead()
- * #define readB bitRead(PIND,3)//faster than digitalRead()
+   volatile int encoder0Pos = 0;
+   volatile int lastencoder0Pos = 0;
+   #define readA bitRead(PIND,2)//faster than digitalRead()
+   #define readB bitRead(PIND,3)//faster than digitalRead()
 */
 
 // menu state machine
@@ -96,7 +98,7 @@ boolean setItemState = false;
 boolean lastSetItemState = false;
 volatile int setItemPos = 0;
 
-//configuration for the Tachometer variables 
+//configuration for the Tachometer variables
 #include <FreqMeasure.h>
 #define tachPin 7
 int senseoption = 3; // either 1 or 2. 1 == interrupt, 2 == freq counter. chippernut defaults to 2
@@ -104,11 +106,11 @@ int cal = 30; // chippernut uses 30 by default
 int justfixed = 0;
 volatile unsigned long lastPulseTime;
 volatile unsigned long interval = 0;
-volatile int timeoutCounter; 
+volatile int timeoutCounter;
 volatile int timeoutValue;
-long rpm = 1000; 
+long rpm = 1000;
 long revs;
-long rpm_last; 
+long rpm_last;
 //long displayRpm;
 //long previousTime;
 long previousMillis = 0;
@@ -119,7 +121,7 @@ int index = 0;
 long total = 0;
 long average = 0;
 
-//int rpmLast = 3000; 
+//int rpmLast = 3000;
 //float revValue = 0;
 //float rev = 0;
 //int oldTime = 0;
@@ -132,24 +134,25 @@ long average = 0;
 //volatile boolean newRpmData = false;
 //int timer1_counter;
 bool fakeRPM = false;
+int displayStyle = 0; // 0 for dot, 1 for bar
 
 void setup() {
   Serial.begin(115200);
-  
+
   if ( verbose ) {
     delay(1000);
     Serial.println("hello world");
     delay(1000);
   }
-  
+
   EEPROM.setMemPool(MEMORY_BASE, EEPROMSizeMicro); // set memorypool base to 32, micro board
   configAddress = EEPROM.getAddress(sizeof(SettingsStruct)); // size of config object
   ok = loadConfig();
-  alpha4.setBrightness(Settings.brightness / 16);
 
   // quadalpha setup
 
   alpha4.begin(0x70);  // pass in the address
+  alpha4.setBrightness(Settings.brightness / 16);
   //pinMode(ALPHAPWM, OUTPUT);
   //analogWrite(ALPHAPWM, 255);
   //String("XXXX").toCharArray(displaybuffer,4);
@@ -160,10 +163,10 @@ void setup() {
   //  delay(10);
   //}
   alpha4DashChase();
-  String("boot").toCharArray(displaybuffer,5);
+  String("boot").toCharArray(displaybuffer, 5);
   alpha4print();
   delay(100);
-    
+
   // neopixel setup
   strip.begin();
   strip.show(); // Initialize all pixels to 'off'
@@ -171,88 +174,75 @@ void setup() {
   //rainbowCycle(5);
   delay(100);
   blackout();
-  
+
   alpha4.clear();
   alpha4.writeDisplay();
 
-  // display every character, 
+  // display every character,
   //for (uint8_t i='!'; i<='z'; i++) {
   //  alpha4.writeDigitAscii(0, i);
   //  alpha4.writeDigitAscii(1, i+1);
   //  alpha4.writeDigitAscii(2, i+2);
   //  alpha4.writeDigitAscii(3, i+3);
   //  alpha4.writeDisplay();
-    
+
   //  delay(300);
   //}
-  
-//  String("Tach").toCharArray(displaybuffer,5);
-//  alpha4print();
-//  delay(10);
-  
+
+  //  String("Tach").toCharArray(displaybuffer,5);
+  //  alpha4print();
+  //  delay(10);
+
   // button setup
   //attachInterrupt(digitalPinToInterrupt(buttonPin), button, RISING);
   pinMode(buttonPin, INPUT_PULLUP);
   button.setEventHandler(handleEvent);
-  
-  // rotary encoder setup
-  pinMode(encoder0PinA, INPUT_PULLUP); 
-  pinMode(encoder0PinB, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(encoder0PinA), rotate, CHANGE); 
-  attachInterrupt(digitalPinToInterrupt(encoder0PinB), rotate, CHANGE); 
 
-  // config for the Tach 
-  pinMode(tachPin, INPUT); 
-  // digitalWrite(sensorPin, HIGH); // enable internal pullup (if Hall sensor needs it) 
-  switch (senseoption){
+  // rotary encoder setup
+  pinMode(encoder0PinA, INPUT_PULLUP);
+  pinMode(encoder0PinB, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(encoder0PinA), rotate, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(encoder0PinB), rotate, CHANGE);
+
+  // config for the Tach
+  pinMode(tachPin, INPUT);
+  // digitalWrite(sensorPin, HIGH); // enable internal pullup (if Hall sensor needs it)
+  switch (senseoption) {
     case 1:
-      attachInterrupt(digitalPinToInterrupt(tachPin), sensorIsr, RISING); 
+      attachInterrupt(digitalPinToInterrupt(tachPin), sensorIsr, RISING);
       break;
-    case 2: 
+    case 2:
       FreqMeasure.begin();
-    break;  
+      break;
   }
   //revs = 0;
   //rpm = 0;
   //displayRpm = 0;
   //previousTime = 0;
-  /*
-  //~~~~~~~~~~~~~~~~~~~~***************** Timer 1 Configuration *****************~~~~~~~~~~~~~~~~~~~~~
-  cli();  // disable interrupts
-  TCCR1A = 0;
-  TCCR1B = 0;
-  // example calculation: timer1_counter = 65536 - ( 16MHz/pre-scaler/4Hz) = 65536 - 15625 = 49911
-  timer1_counter =  65536 - ( 250000 / counterFreq);
 
-  TCNT1 = timer1_counter;   // preload timer
-  TCCR1B |= ((1 << CS10) | (1 << CS11));    // 64 prescaler 
-  TIMSK1 |= (1 << TOIE1);   // enable timer overflow interrupt
-  //~~~~~~~~~~~~~~~~~~~~***************** Timer 1 Configuration *****************~~~~~~~~~~~~~~~~~~~~~
-  sei();  //  global interrupt enable
-  */
 }
 
 
 /*
- * MAIN 
- */
-void loop() {  
+   MAIN
+*/
+void loop() {
   delay(10);
   /*
-   * 
-   * 
-   * start of main block
-   * 
-   * 
-   */
-   // this should either display or count rpm
-   switch (senseoption){
+
+
+     start of main block
+
+
+  */
+  // this should either display or count rpm
+  switch (senseoption) {
     case 1:
-      rpm = long(60e7/cal)/(float)interval;
+      rpm = long(60e7 / cal) / (float)interval;
       break;
-    case 2: 
+    case 2:
       if (FreqMeasure.available()) {
-        rpm = (600/cal)* FreqMeasure.countToFrequency(FreqMeasure.read());
+        rpm = (600 / cal) * FreqMeasure.countToFrequency(FreqMeasure.read());
         timeoutCounter = timeoutValue;
       }
       break;
@@ -272,108 +262,66 @@ void loop() {
         rpm = 500;
         fakeRpmCounterLast = fakeRpmCounter;
       }
-      break;  
+      break;
   }
   // this looks like controlling hysteresis
   // don't count if less than +/- 20%, more than zero, fixed less than 3 times
-/*
-  if (((rpm > (rpm_last +(rpm_last*.2))) || (rpm < (rpm_last - (rpm_last*.2)))) && (rpm_last > 0) && (justfixed < 3)){
-        rpm = rpm_last; // don't count the change
-        justfixed++;
-        if(verbose){Serial.print("FIXED!  ");}
-        if(verbose){Serial.println(rpm_last);}         
-      
-  } else {
-    rpm_last = rpm;
-    justfixed--;
-    if (justfixed <= 0){justfixed = 0;}
-  }
+  /*
+    if (((rpm > (rpm_last +(rpm_last*.2))) || (rpm < (rpm_last - (rpm_last*.2)))) && (rpm_last > 0) && (justfixed < 3)){
+          rpm = rpm_last; // don't count the change
+          justfixed++;
+          if(verbose){Serial.print("FIXED!  ");}
+          if(verbose){Serial.println(rpm_last);}
+
+    } else {
+      rpm_last = rpm;
+      justfixed--;
+      if (justfixed <= 0){justfixed = 0;}
+    }
   */
   // average out rpm over numReadings
-  if (smoothing){
-    total = total - rpmArray[index]; 
+  if (smoothing) {
+    total = total - rpmArray[index];
     rpmArray[index] = rpm;
-    total = total + rpmArray[index]; 
-    index = index + 1;   
-    if (index >= numReadings){              
-      index = 0;    
-    }                       
-    average = total / numReadings; 
-    if(verbose){Serial.print("average: ");
-    Serial.println(average);}
-    rpm = average;       
+    total = total + rpmArray[index];
+    index = index + 1;
+    if (index >= numReadings) {
+      index = 0;
+    }
+    average = total / numReadings;
+    if (verbose) {
+      Serial.print("average: ");
+      Serial.println(average);
+    }
+    rpm = average;
   }
+
+  lightItUp(); // use the value of RPM to light up the neopixel bar
 
   // polling for a button press
   button.check();
   if ( !menuState ) {
-    // tachometer routine
-    // detach interrupt while doing sensitive maths
-    //detachInterrupt(digitalPinToInterrupt(tachPin));
-    //time = millis() - oldTime;        //finds the time 
-    //rpm = (rev / time) * 60000;         //calculates rpm
-    //oldTime = millis();             //saves the current time
-    //rev = 0;
-    //attachInterrupt(digitalPinToInterrupt(tachPin), tachIsr, RISING);
-    
-    // we want to display based on three bands
-    // starting at Settings.enable_rpm;
-    // ending at Settings.shift_rpm;
-    // (Settings.shift_rpm - Settings.enable_rpm) / 3
-    // (5500 - 1500 ) / 3 = 4000 / 3 = 1333.3333
-    // rpmInterval = (Settings.shift_rpm - Settings.enable_rpm) / 3
-    // rpmC1 = Settings.enable_rpm + rpmInterval
-    // C1 1500 to < rpmC1
-    // rpmC2 = Settings.enable_rpm + ( rpmInterval * 2)
-    // C2  >= rpmC1 to < rpmC2
-    // C3 >= rpmC2 to < Settings.shift_rpm
-    // >= Settings.shift_rpm 
-    // in three bands, one for each color
-    //if ( rpm < shift_rpm ) {
-    /*
-    if ( newRpmData ) {
-      rpm = getRpm();
-      rpm = constrain (rpm, 0, 9999); 
-      // given the nature of the RPM interrupt reader, a zero reading will produce a max result 
-      // this fixes this quirk 
-      Serial.println(rpm); 
-      //String(rpm).toCharArray(displaybuffer,5);
-      snprintf(displaybuffer, sizeof(displaybuffer), "%04d", rpm);
-      alpha4print(); 
-      delay(10); // not sure if we really need to delay here, would need to time how long everything else takes to process
-    }
-    */
-    Serial.println("revs: " + String(revs) + " rpmArray[index]: " + String(rpmArray[index]) + " total: " + String(total) + " index: " + String(index) + " average: " + String(average)); 
-    //detachInterrupt(digitalPinToInterrupt(tachPin));
-    //rpm = revs * 60000 / (millis() - previousTime);
-    //previousTime = millis();
-    //revs = 0;
-    //attachInterrupt(digitalPinToInterrupt(tachPin), tachInterrupt, RISING);
-    //total = total - rpmArray[index];
-    //rpmArray[index] = rpm;
-    //total = total + rpmArray[index];
-    //++index;
-    //if ( index > numReadings ) {
-    //  index = 0;
-    //}
-    //displayRpm = total / numReadings;
-    //displayRpm = average;
-    //displayRpm = constrain (displayRpm, 0, 9999); 
-    // given the nature of the RPM interrupt reader, a zero reading will produce a max result 
-    // this fixes this quirk 
-    ///////Serial.println("rpm: " + String(rpm) + " rpmArray[index]: " + String(rpmArray[index]) + " total: " + String(total) + " index: " + String(index) + " average: " + String(average)); 
+    tachDisplay = true;
+
+    Serial.println("revs: " + String(revs) + " rpmArray[index]: " + String(rpmArray[index]) + " total: " + String(total) + " index: " + String(index) + " average: " + String(average));
+    ///////Serial.println("rpm: " + String(rpm) + " rpmArray[index]: " + String(rpmArray[index]) + " total: " + String(total) + " index: " + String(index) + " average: " + String(average));
     //String(rpm).toCharArray(displaybuffer,5);
     snprintf(displaybuffer, sizeof(displaybuffer), "%04d", rpm);
-    alpha4print(); 
+    alpha4print();
     //delay(250);
-    
+
   } else if ( menuState && !setItemState ) { // HIGH LOW
     // scroll through menu items
-    if ( clickCounter > clickCounterLast && menuPos <= 10 ) {
-      menuPos++;
+    tachDisplay = false;
+    if ( clickCounter > clickCounterLast ) {
+      if ( menuPos < 11 ) {
+        menuPos++;
+      }
       clickCounterLast = clickCounter;
-    } else if ( clickCounter < clickCounterLast && menuPos >= 1 ) {
-      menuPos--;
+    } else if ( clickCounter < clickCounterLast ) {
+      if ( menuPos > 0 ) {
+        menuPos--;
+      }
       clickCounterLast = clickCounter;
     }
     if ( verbose ) {
@@ -393,16 +341,22 @@ void loop() {
         // usable range seems to be more like 0x2F is super dim
         // and 0x6B is bright, but not painfully so
         // and of course anything above that is silly
-        
+
         if ( clickCounter > clickCounterLast ) {
-          if ( Settings.brightness < 240 ) { 
+          if ( Settings.brightness < 240 ) {
             Settings.brightness += 16;
           }
-          
+
         } else if ( clickCounter < clickCounterLast ) {
           if ( Settings.brightness > 16 ) {
             Settings.brightness -= 16;
           }
+        }
+        if ( Settings.brightness < 8 ) {
+          Settings.brightness = 252;
+        }
+        if ( Settings.brightness > 252 ) {
+          Settings.brightness = 8;
         }
         clickCounterLast = clickCounter;
 
@@ -411,21 +365,21 @@ void loop() {
         //String("%04d",Settings.brightness).toCharArray(displaybuffer,5);
         snprintf(displaybuffer, sizeof(displaybuffer), "%04d", Settings.brightness);
         alpha4print();
-        colorFill(Wheel(Settings.color_primary),Settings.brightness);
+        colorFill(Wheel(Settings.color_primary), Settings.brightness);
         break;
       case 2: // enable rpm
         if ( clickCounter > clickCounterLast && Settings.enable_rpm <= Settings.shift_rpm - 200 ) {
           Settings.enable_rpm += 100;
-        } else if ( clickCounter < clickCounterLast && Settings.enable_rpm > 2500 ) {
+        } else if ( clickCounter < clickCounterLast && Settings.enable_rpm > 2000 ) {
           Settings.enable_rpm -= 100;
         }
-          clickCounterLast = clickCounter;
+        clickCounterLast = clickCounter;
         //String(Settings.enable_rpm).toCharArray(displaybuffer,5);
         snprintf(displaybuffer, sizeof(displaybuffer), "%04d", Settings.enable_rpm);
         alpha4print();
         break;
       case 3: // shift rpm
-        if ( clickCounter > clickCounterLast && Settings.shift_rpm <= 9800 ) {
+        if ( clickCounter > clickCounterLast && Settings.shift_rpm <= 9000 ) {
           Settings.shift_rpm += 100;
         } else if ( clickCounter < clickCounterLast && Settings.shift_rpm > Settings.enable_rpm ) {
           Settings.shift_rpm -= 100;
@@ -440,12 +394,12 @@ void loop() {
         } else if ( clickCounter < clickCounterLast ) {
           Settings.color_primary -= 4;
         }
-        if ( Settings.brightness < 8 ) { Settings.brightness = 252; }
-        if ( Settings.brightness > 252 ) { Settings.brightness = 8; }
+        //if ( Settings.brightness < 8 ) { Settings.brightness = 252; }
+        //if ( Settings.brightness > 252 ) { Settings.brightness = 8; }
         clickCounterLast = clickCounter;
         snprintf(displaybuffer, sizeof(displaybuffer), "%04d", Settings.color_primary);
         alpha4print();
-        colorFill(Wheel(Settings.color_primary),Settings.brightness);
+        colorFill(Wheel(Settings.color_primary), Settings.brightness);
         break;
       case 5: // color 2
         if ( clickCounter > clickCounterLast ) {
@@ -453,12 +407,12 @@ void loop() {
         } else if ( clickCounter < clickCounterLast ) {
           Settings.color_secondary -= 4;
         }
-        if ( Settings.brightness < 8 ) { Settings.brightness = 252; }
-        if ( Settings.brightness > 252 ) { Settings.brightness = 8; }
+        //if ( Settings.brightness < 8 ) { Settings.brightness = 252; }
+        //if ( Settings.brightness > 252 ) { Settings.brightness = 8; }
         clickCounterLast = clickCounter;
         snprintf(displaybuffer, sizeof(displaybuffer), "%04d", Settings.color_secondary);
         alpha4print();
-        colorFill(Wheel(Settings.color_secondary),Settings.brightness);
+        colorFill(Wheel(Settings.color_secondary), Settings.brightness);
         break;
       case 6: // color 3
         if ( clickCounter > clickCounterLast ) {
@@ -466,12 +420,12 @@ void loop() {
         } else if ( clickCounter < clickCounterLast ) {
           Settings.color_tertiary -= 4;
         }
-        if ( Settings.brightness < 8 ) { Settings.brightness = 252; }
-        if ( Settings.brightness > 252 ) { Settings.brightness = 8; }
+        //if ( Settings.brightness < 8 ) { Settings.brightness = 252; }
+        //if ( Settings.brightness > 252 ) { Settings.brightness = 8; }
         clickCounterLast = clickCounter;
         snprintf(displaybuffer, sizeof(displaybuffer), "%04d", Settings.color_tertiary);
         alpha4print();
-        colorFill(Wheel(Settings.color_tertiary),Settings.brightness);
+        colorFill(Wheel(Settings.color_tertiary), Settings.brightness);
         break;
       case 7: // shift color 1
         if ( clickCounter > clickCounterLast ) {
@@ -479,12 +433,12 @@ void loop() {
         } else if ( clickCounter < clickCounterLast ) {
           Settings.color_shift_primary -= 4;
         }
-        if ( Settings.brightness < 8 ) { Settings.brightness = 252; }
-        if ( Settings.brightness > 252 ) { Settings.brightness = 8; }
+        //if ( Settings.brightness < 8 ) { Settings.brightness = 252; }
+        //if ( Settings.brightness > 252 ) { Settings.brightness = 8; }
         clickCounterLast = clickCounter;
         snprintf(displaybuffer, sizeof(displaybuffer), "%04d", Settings.color_shift_primary);
         alpha4print();
-        colorFill(Wheel(Settings.color_shift_primary),Settings.brightness);
+        colorFill(Wheel(Settings.color_shift_primary), Settings.brightness);
         break;
       case 8: // shift color 2
         if ( clickCounter > clickCounterLast ) {
@@ -492,50 +446,76 @@ void loop() {
         } else if ( clickCounter < clickCounterLast ) {
           Settings.color_shift_secondary -= 4;
         }
-        if ( Settings.brightness < 8 ) { Settings.brightness = 252; }
-        if ( Settings.brightness > 252 ) { Settings.brightness = 8; }
+        if ( Settings.brightness < 8 ) {
+          Settings.brightness = 252;
+        }
+        if ( Settings.brightness > 252 ) {
+          Settings.brightness = 8;
+        }
         clickCounterLast = clickCounter;
         snprintf(displaybuffer, sizeof(displaybuffer), "%04d", Settings.color_shift_secondary);
         alpha4print();
-        colorFill(Wheel(Settings.color_shift_secondary),Settings.brightness);
+        colorFill(Wheel(Settings.color_shift_secondary), Settings.brightness);
         break;
       case 9: // fake rpm
         if ( clickCounter > clickCounterLast ) {
           fakeRPM = true;
-          String("Yep ").toCharArray(displaybuffer,5);
+          String("YeP ").toCharArray(displaybuffer, 5);
           alpha4print();
           clickCounterLast = clickCounter;
         } else if (clickCounter < clickCounterLast ) {
           fakeRPM = false;
-          String("Nope").toCharArray(displaybuffer,5);
+          String("NoPe").toCharArray(displaybuffer, 5);
           alpha4print();
           clickCounterLast = clickCounter;
         }
+        break;
+      case 10: // display style
+        if ( (clickCounter < clickCounterLast) && (displayStyle==1) ) {
+          displayStyle = 0;
+          String("Dot ").toCharArray(displaybuffer, 5);
+          alpha4print();
+          clickCounterLast = clickCounter;
+        }
+        if ( ((clickCounter > clickCounterLast) && (displayStyle==0)) || ((clickCounter < clickCounterLast) && (displayStyle==2)) ) {
+          displayStyle = 1;
+          String("Bar ").toCharArray(displaybuffer, 5);
+          alpha4print();
+          clickCounterLast = clickCounter;
+        }
+        if ( (clickCounter > clickCounterLast) && (displayStyle==1) ) {
+          displayStyle = 2;
+          String("CinO").toCharArray(displaybuffer, 5);
+          alpha4print();
+          clickCounterLast = clickCounter;
+        }
+        break;
       default: // brightness and colors
         clickCounterLast = clickCounter;
         break;
     }
-    
+
     if ( verbose ) {
       Serial.print("encoder: " + String(clickCounter) + " last encoder: " + String(clickCounterLast) + " menu: " + String(menuPos));
       Serial.print(" menu: " + String(menuState) + " setItem: " + String(setItemState));
-      Serial.print(" brt: " + String(Settings.brightness,HEX) + 
-        " enab: " + String(Settings.enable_rpm,DEC) +
-        " shft: " + String(Settings.shift_rpm,DEC) +
-        " col1: " + String(Settings.color_primary,HEX));
-      Serial.println( " col2: " + String(Settings.color_secondary,HEX) +
-        " col3: " + String(Settings.color_tertiary,HEX) +
-        " sft1: " + String(Settings.color_shift_primary,HEX) +
-        " sft2: " + String(Settings.color_shift_secondary,HEX));
+      Serial.print(" brt: " + String(Settings.brightness, HEX) +
+                   " enab: " + String(Settings.enable_rpm, DEC) +
+                   " shft: " + String(Settings.shift_rpm, DEC) +
+                   " col1: " + String(Settings.color_primary, HEX));
+      Serial.println( " col2: " + String(Settings.color_secondary, HEX) +
+                      " col3: " + String(Settings.color_tertiary, HEX) +
+                      " sft1: " + String(Settings.color_shift_primary, HEX) +
+                      " sft2: " + String(Settings.color_shift_secondary, HEX));
     }
   } else {
-      if ( verbose ) {
-        Serial.print("encoder: " + String(clickCounter) + " last encoder: " + String(clickCounterLast) + " menu: " + String(menuPos));
-        Serial.println(" menu: " + String(menuState) + " setItem: " + String(setItemState));
-      }
+    if ( verbose ) {
+      Serial.print("encoder: " + String(clickCounter) + " last encoder: " + String(clickCounterLast) + " menu: " + String(menuPos));
+      Serial.println(" menu: " + String(menuState) + " setItem: " + String(setItemState));
+    }
   }
 
   if ( menuState && !setItemState ) {
+    tachDisplay = false;
     switch (menuPos) {
       case 0:
         //displaybuffer[0] = 0x39;
@@ -544,53 +524,57 @@ void loop() {
         //displaybuffer[3] = 0xF;
         //alpha4printraw();
         //blackout();
-        String("EXIT").toCharArray(displaybuffer,5);
+        String("EXIT").toCharArray(displaybuffer, 5);
         alpha4print();
         blackout();
         break;
       case 1:
-        String("Brt ").toCharArray(displaybuffer,5);
+        String("Brt ").toCharArray(displaybuffer, 5);
         alpha4print();
         /*
-        menustring = String("Brightness");
-        menustring.toCharArray(longdisplaybuffer,menustring.length());
-        alpha4printscroll();
+          menustring = String("Brightness");
+          menustring.toCharArray(longdisplaybuffer,menustring.length());
+          alpha4printscroll();
         */
         break;
       case 2:
-        String("Enbl").toCharArray(displaybuffer,5);
+        String("Enbl").toCharArray(displaybuffer, 5);
         alpha4print();
         break;
       case 3:
-        String("Shft").toCharArray(displaybuffer,5);
+        String("Shft").toCharArray(displaybuffer, 5);
         alpha4print();
         break;
       case 4:
-        String("Col1").toCharArray(displaybuffer,5);
+        String("Col1").toCharArray(displaybuffer, 5);
         alpha4print();
         break;
       case 5:
-        String("Col2").toCharArray(displaybuffer,5);
+        String("Col2").toCharArray(displaybuffer, 5);
         alpha4print();
         break;
       case 6:
-        String("Col3").toCharArray(displaybuffer,5);
+        String("Col3").toCharArray(displaybuffer, 5);
         alpha4print();
         break;
       case 7:
-        String("SC 1").toCharArray(displaybuffer,5);
+        String("SC 1").toCharArray(displaybuffer, 5);
         alpha4print();
         break;
       case 8:
-        String("SC 2").toCharArray(displaybuffer,5);
+        String("SC 2").toCharArray(displaybuffer, 5);
         alpha4print();
         break;
       case 9:
-        String("Fake").toCharArray(displaybuffer,5);
+        String("Fake").toCharArray(displaybuffer, 5);
         alpha4print();
         break;
       case 10:
-        String("SAVE").toCharArray(displaybuffer,5);
+        String("StYl").toCharArray(displaybuffer, 5);
+        alpha4print();
+        break;
+      case 11:
+        String("SAVE").toCharArray(displaybuffer, 5);
         alpha4print();
         blackout();
         break;
@@ -600,35 +584,134 @@ void loop() {
 
 // Fill the dots one after the other with a color
 void colorWipe(uint32_t c, uint8_t wait) {
-  for(uint16_t i=0; i<strip.numPixels(); i++) {
-      strip.setPixelColor(i, c);
-      strip.show();
-      delay(wait);
+  for (uint16_t i = 0; i < strip.numPixels(); i++) {
+    strip.setPixelColor(i, c);
+    strip.show();
+    delay(wait);
   }
 }
 
 // flood all pixels in range with brightness
 void colorFill(uint32_t c, uint8_t brightness) {
-  for(uint16_t i=0; i<strip.numPixels(); i++) {
-      strip.setPixelColor(i, c);
+  for (uint16_t i = 0; i < strip.numPixels(); i++) {
+    strip.setPixelColor(i, c);
   }
   strip.setBrightness(brightness);
   strip.show();
 }
 
+void lightItUp(void) {
+  int pixelCount = 0;
+  int i = 0;
+  // don't do anything
+  if ( tachDisplay == false ) {
+    return;
+  }
+  if ( rpm < Settings.enable_rpm ) {
+    for (i = 0; i < strip.numPixels(); i++) {
+      strip.setPixelColor(i, 0);
+    }
+    strip.show();
+    return;
+  }
+  // flash if we are past the configured shift rpm
+  if ( rpm >= Settings.shift_rpm ) {
+    for (i = 0; i < numPixels; i++) {
+      strip.setPixelColor(i, 0);
+    }
+    strip.show();
+    for (i = 0; i < numPixels; i++) {
+      strip.setPixelColor(i, Wheel(Settings.color_shift_primary));
+    }
+    strip.show();
+    delay(50);
+    for (i = 0; i < numPixels; i++) {
+      strip.setPixelColor(i, Wheel(Settings.color_shift_secondary));
+    }
+    strip.show();
+    return;
+  }
+
+
+  // one routine to wipe left to right
+  // max rpm - low rpm = rpm range
+  // rpm range / number of dots to get #rpm per dot
+  
+  int dotSize = (Settings.shift_rpm - Settings.enable_rpm) / numPixels;
+  int dotCount = (rpm - Settings.enable_rpm) / dotSize; // 1 to 32
+
+  switch (displayStyle) {
+    case 0:
+      for (i = 0; i < numPixels; i++) {
+        strip.setPixelColor(i, 0);
+      }
+      if ( dotCount < 16 ) {
+        strip.setPixelColor(dotCount, Wheel(Settings.color_primary));
+      }
+      if ( (dotCount < 24) && (dotCount >= 16) ) {
+        strip.setPixelColor(dotCount, Wheel(Settings.color_secondary));
+      }
+      if ( (dotCount < 32) && (dotCount >= 24) ) {
+        strip.setPixelColor(dotCount, Wheel(Settings.color_tertiary));
+      }
+      strip.show();
+      break;
+    case 1:
+      for (i = 0; i < numPixels; i++) {
+        strip.setPixelColor(i, 0);
+      }
+      for (i = 0; i < dotCount; i++) {
+        if ( i < 16 ) {
+          strip.setPixelColor(i, Wheel(Settings.color_primary));
+        }
+        if ( (i < 24) && (i >= 16) ) {
+          strip.setPixelColor(i, Wheel(Settings.color_secondary));
+        }
+        if ( (i <= 32) && (i >= 24) ) {
+          strip.setPixelColor(i, Wheel(Settings.color_tertiary));
+        }
+      }
+      strip.show();
+      break;
+    case 2:
+      dotSize = (Settings.shift_rpm - Settings.enable_rpm) / (numPixels / 2);
+      dotCount = ((rpm - Settings.enable_rpm) / dotSize) + 16; // 16 to 32
+      for (i = 0; i < numPixels; i++) {
+        strip.setPixelColor(i, 0);
+      }
+      for (i = 16; i < dotCount; i++) {
+        if ( i < 24 ) {
+          strip.setPixelColor(i, Wheel(Settings.color_primary));
+          strip.setPixelColor(31-i, Wheel(Settings.color_primary));
+        }
+        if ( (i < 28) && (i >= 24) ) {
+          strip.setPixelColor(i, Wheel(Settings.color_secondary));
+          strip.setPixelColor(31-i, Wheel(Settings.color_secondary));
+        }
+        if ( (i <= 32) && (i >= 28) ) {
+          strip.setPixelColor(i, Wheel(Settings.color_tertiary));
+          strip.setPixelColor(31-i, Wheel(Settings.color_tertiary));
+        }
+      }
+      strip.show();
+      break;
+  }
+
+}
+
 void blackout(void) {
-   for(int i=0; i<strip.numPixels(); i++) {
-     strip.setPixelColor(i,0);
-   }
-   strip.show();
+  for (int i = 0; i < strip.numPixels(); i++) {
+    strip.setPixelColor(i, 0);
+  }
+  strip.show();
 }
 
 void rainbow(uint8_t wait) {
   uint16_t i, j;
   strip.setBrightness(32);
-  for(j=0; j<256; j++) {
-    for(i=0; i<strip.numPixels(); i++) {
-      strip.setPixelColor(i, Wheel((i+j) & 255));
+  for (j = 0; j < 256; j++) {
+    for (i = 0; i < strip.numPixels(); i++) {
+      strip.setPixelColor(i, Wheel((i + j) & 255));
     }
     strip.show();
     delay(wait);
@@ -640,8 +723,8 @@ void rainbowCycle(uint8_t wait) {
   uint16_t i, j;
 
   //for(j=0; j<256*2; j++) { // 2 cycles of all colors on wheel, was 5
-  for(j=0; j<250*2; j++) { // 2 cycles of all colors on wheel, was 5
-    for(i=0; i< strip.numPixels(); i++) {
+  for (j = 0; j < 250 * 2; j++) { // 2 cycles of all colors on wheel, was 5
+    for (i = 0; i < strip.numPixels(); i++) {
       strip.setPixelColor(i, Wheel(((i * 256 / strip.numPixels()) + j) & 255));
       strip.setBrightness( (j / 5 / 16) + 64);
     }
@@ -652,17 +735,17 @@ void rainbowCycle(uint8_t wait) {
 
 //Theatre-style crawling lights.
 void theaterChase(uint32_t c, uint8_t wait) {
-  for (int j=0; j<10; j++) {  //do 10 cycles of chasing
-    for (int q=0; q < 3; q++) {
-      for (int i=0; i < strip.numPixels(); i=i+3) {
-        strip.setPixelColor(i+q, c);    //turn every third pixel on
+  for (int j = 0; j < 10; j++) { //do 10 cycles of chasing
+    for (int q = 0; q < 3; q++) {
+      for (int i = 0; i < strip.numPixels(); i = i + 3) {
+        strip.setPixelColor(i + q, c);  //turn every third pixel on
       }
       strip.show();
-     
+
       delay(wait);
-     
-      for (int i=0; i < strip.numPixels(); i=i+3) {
-        strip.setPixelColor(i+q, 0);        //turn every third pixel off
+
+      for (int i = 0; i < strip.numPixels(); i = i + 3) {
+        strip.setPixelColor(i + q, 0);      //turn every third pixel off
       }
     }
   }
@@ -670,18 +753,18 @@ void theaterChase(uint32_t c, uint8_t wait) {
 
 //Theatre-style crawling lights with rainbow effect
 void theaterChaseRainbow(uint8_t wait) {
-  for (int j=0; j < 256; j++) {     // cycle all 256 colors in the wheel
-    for (int q=0; q < 3; q++) {
-        for (int i=0; i < strip.numPixels(); i=i+3) {
-          strip.setPixelColor(i+q, Wheel( (i+j) % 255));    //turn every third pixel on
-        }
-        strip.show();
-       
-        delay(wait);
-       
-        for (int i=0; i < strip.numPixels(); i=i+3) {
-          strip.setPixelColor(i+q, 0);        //turn every third pixel off
-        }
+  for (int j = 0; j < 256; j++) {   // cycle all 256 colors in the wheel
+    for (int q = 0; q < 3; q++) {
+      for (int i = 0; i < strip.numPixels(); i = i + 3) {
+        strip.setPixelColor(i + q, Wheel( (i + j) % 255)); //turn every third pixel on
+      }
+      strip.show();
+
+      delay(wait);
+
+      for (int i = 0; i < strip.numPixels(); i = i + 3) {
+        strip.setPixelColor(i + q, 0);      //turn every third pixel off
+      }
     }
   }
 }
@@ -692,23 +775,23 @@ uint32_t Wheel(byte WheelPos) {
 
   WheelPos = 255 - WheelPos; // why do we invert WheelPos?
   if (WheelPos < 6 ) {
-    return strip.Color(255,255,255);
-  } else if(WheelPos > 250) {
-    return strip.Color(0,0,0);
-  } else if(WheelPos < 85) {
-                     // full red,    no green,     blue
-   return strip.Color(255 - WheelPos * 3, 0, WheelPos * 3);
-  } else if(WheelPos < 170) {
+    return strip.Color(255, 255, 255);
+  } else if (WheelPos > 250) {
+    return strip.Color(0, 0, 0);
+  } else if (WheelPos < 85) {
+    // full red,    no green,     blue
+    return strip.Color(255 - WheelPos * 3, 0, WheelPos * 3);
+  } else if (WheelPos < 170) {
     WheelPos -= 85;
-                     // no red, full green,  blue
-   return strip.Color(0, WheelPos * 3, 255 - WheelPos * 3);
+    // no red, full green,  blue
+    return strip.Color(0, WheelPos * 3, 255 - WheelPos * 3);
   } else { // blue
-   WheelPos -= 170;
-                     // full red, green, no blue
-   return strip.Color(WheelPos * 3, 255 - WheelPos * 3, 0);
+    WheelPos -= 170;
+    // full red, green, no blue
+    return strip.Color(WheelPos * 3, 255 - WheelPos * 3, 0);
   }
 
-  
+
   // 4 blocks, 64
   //WheelPos = 255 - WheelPos;
   //if(WheelPos < 64) {
@@ -746,7 +829,7 @@ void alpha4printraw( void ) {
 }
 
 /*
-void alpha4printscroll( void ) {
+  void alpha4printscroll( void ) {
   // scroll print the long string
   // finish by leaving the static short string
   // we need to know if we printed the long string or not though
@@ -762,23 +845,23 @@ void alpha4printscroll( void ) {
     delay(250);
   }
   delay(500);
-}
+  }
 */
 
 void alpha4DashChase() {
- // 16-bit digits in each alpha
- // 0 DP N M L K J H G2 G1 F E D C B A
- //
- //     A              -
- // F H J K B      | \ | / |
- //   G1 G2          -   -
- // E L M N C      | / | \ |
- //     D     DP       -     *
- // 
+  // 16-bit digits in each alpha
+  // 0 DP N M L K J H G2 G1 F E D C B A
+  //
+  //     A              -
+  // F H J K B      | \ | / |
+  //   G1 G2          -   -
+  // E L M N C      | / | \ |
+  //     D     DP       -     *
+  //
   int buffer[2] = { 0x40, 0x80 };
-  
+
   //Serial.println("clear, then write all dashes");
-  
+
   alpha4.clear();  // clear display first
   alpha4.writeDisplay();
   displaybuffer[0] = 0xC0;
@@ -787,19 +870,19 @@ void alpha4DashChase() {
   displaybuffer[3] = 0xC0;
   alpha4print();
   delay(100);
-  
+
   //Serial.println("clear to prep for animated dash chase");
-  for (int i=0; i < 4; i++) {
-      alpha4.writeDigitRaw(i, 0x00);
+  for (int i = 0; i < 4; i++) {
+    alpha4.writeDigitRaw(i, 0x00);
   }
   alpha4.writeDisplay();
-    
+
   for (int k = 0; k < 1; k++) {
     alpha4.clear();  // clear display first
     alpha4.writeDisplay();
-  
-    for (int i=0; i < 4; i++) {
-      for (int j=0; j < 2; j++) {
+
+    for (int i = 0; i < 4; i++) {
+      for (int j = 0; j < 2; j++) {
         alpha4.writeDigitRaw(i, buffer[j]);
         alpha4.writeDisplay();
         delay(50);
@@ -809,8 +892,8 @@ void alpha4DashChase() {
     }
     alpha4.clear();  // clear display
     alpha4.writeDisplay();
-    for (int i=3; i >= 0; i--) {
-      for (int j=1; j >= 0; j--) {
+    for (int i = 3; i >= 0; i--) {
+      for (int j = 1; j >= 0; j--) {
         alpha4.clear();
         alpha4.writeDigitRaw(i, buffer[j]);
         alpha4.writeDisplay();
@@ -819,7 +902,7 @@ void alpha4DashChase() {
       }
     }
   }
-  
+
   alpha4.clear();
   alpha4.writeDisplay();
   return;
@@ -839,22 +922,23 @@ void handleEvent(AceButton* /* button */, uint8_t eventType, uint8_t /* buttonSt
       // state 3: in setItemState + button press => setItemState false
 
       // special condition for state 2, postion 0 just reset states to false (exit)
-      // special condition for state 2, position 9 reset states to false, save config, exit
+      // special condition for state 2, position 10 reset states to false, save config, exit
 
       if ( menuState && setItemState ) { // in menu and setting
-       // button press here should write to EEPROM
+        // button press here should write to EEPROM
         // then move back to menu item selection
         lastSetItemState = setItemState;
         setItemState = false;
         // special if we are at the beginning or end
         if ( menuPos == 0 ) { // exit
           menuState = false;
-        } else if ( menuPos == 10 ) { // save and exit
+        } else if ( menuPos == 11 ) { // save and exit
           menuState = false;
           saveConfig();
           rainbow(5);
           delay(100);
           blackout();
+          break;
         }
       } else if ( menuState && !setItemState ) { // in menu, not setting a param yet
         // we are at a menu item that we want to set
@@ -886,27 +970,27 @@ bool loadConfig() {
     delay(1000);
     Serial.println("      read settings from EEPROM    ");
   }
-  String("----").toCharArray(displaybuffer,5);
+  String("----").toCharArray(displaybuffer, 5);
   alpha4print();
-  EEPROM.readBlock(configAddress,Settings);
+  EEPROM.readBlock(configAddress, Settings);
   if ( Settings.enable_rpm > 9000 ) // insurance. if unset this will be max unsigned int
     Settings.enable_rpm = 6500;
   if ( Settings.shift_rpm > 9000 )
     Settings.shift_rpm = 7500;
   if ( verbose ) {
-//    Serial.print("encoder: " + String(encoder0Pos) + " last encoder: " + String(lastencoder0Pos) + " menu: " + String(menuPos));
+    //    Serial.print("encoder: " + String(encoder0Pos) + " last encoder: " + String(lastencoder0Pos) + " menu: " + String(menuPos));
     Serial.print(" menu: " + String(menuPos));
     Serial.print(" menu: " + String(menuState) + " setItem: " + String(setItemState));
-    Serial.print(" brt: " + String(Settings.brightness,HEX) + 
-        " enab: " + String(Settings.enable_rpm,DEC) +
-        " shft: " + String(Settings.shift_rpm,DEC) +
-        " col1: " + String(Settings.color_primary,HEX));
-    Serial.println( " col2: " + String(Settings.color_secondary,HEX) +
-        " col3: " + String(Settings.color_tertiary,HEX) +
-        " sft1: " + String(Settings.color_shift_primary,HEX) +
-        " sft2: " + String(Settings.color_shift_secondary,HEX));
+    Serial.print(" brt: " + String(Settings.brightness, HEX) +
+                 " enab: " + String(Settings.enable_rpm, DEC) +
+                 " shft: " + String(Settings.shift_rpm, DEC) +
+                 " col1: " + String(Settings.color_primary, HEX));
+    Serial.println( " col2: " + String(Settings.color_secondary, HEX) +
+                    " col3: " + String(Settings.color_tertiary, HEX) +
+                    " sft1: " + String(Settings.color_shift_primary, HEX) +
+                    " sft2: " + String(Settings.color_shift_secondary, HEX));
   }
-  String("____").toCharArray(displaybuffer,5);
+  String("____").toCharArray(displaybuffer, 5);
   alpha4print();
   return (Settings.version == CONFIG_VERSION);
 }
@@ -914,34 +998,34 @@ bool loadConfig() {
 void saveConfig() {
   if ( verbose )
     Serial.println("      write settings to EEPROM     ");
-  String("____").toCharArray(displaybuffer,5);
+  String("____").toCharArray(displaybuffer, 5);
   alpha4print();
-  EEPROM.writeBlock(configAddress,Settings);
+  EEPROM.writeBlock(configAddress, Settings);
   if ( verbose ) {
     delay(1000);
     ok = loadConfig();
     delay(1000);
   }
-  String("----").toCharArray(displaybuffer,5);
+  String("----").toCharArray(displaybuffer, 5);
   alpha4print();
 }
 
-void tachInterrupt() 
-{ 
-  revs++; 
-} 
+void tachInterrupt()
+{
+  revs++;
+}
 
-void sensorIsr() 
-{ 
-  unsigned long now = micros(); 
-  interval = now - lastPulseTime; 
-  lastPulseTime = now; 
-  timeoutCounter = timeoutValue; 
-} 
+void sensorIsr()
+{
+  unsigned long now = micros();
+  interval = now - lastPulseTime;
+  lastPulseTime = now;
+  timeoutCounter = timeoutValue;
+}
 
 /*
-int getRPM()
-{
+  int getRPM()
+  {
   int count = 0;
   boolean countFlag = LOW;
   unsigned long currentTime = 0;
@@ -961,38 +1045,38 @@ int getRPM()
   }
   int countRpm = int(60000/float(sampleTime))*count;
   return countRpm;
-}
+  }
 */
 
 /*
-// Tach signal input triggers this interrupt vector on the falling edge of pin 2
-void tachInterrupt()
-{
+  // Tach signal input triggers this interrupt vector on the falling edge of pin 2
+  void tachInterrupt()
+  {
   mytachCounter = tachCounter;
   tachCounter = 0;
   newRpmData = true;
   //digitalWrite(systemLedPin, !digitalRead( systemLedPin )); // toggle LED
-}
+  }
 
 
-ISR(TIMER1_OVF_vect)        
-{
+  ISR(TIMER1_OVF_vect)
+  {
   TCNT1 = timer1_counter;   // preload timer
   tachCounter++;
 
    // clamp for when engine is stopped
    //if( tachCounter = 65535 )
     //tachCounter = 0;
-    
+
   //digitalWrite(systemLedPin, !digitalRead( systemLedPin ));  // Toggle LED
 
-}
+  }
 
-float getRpm()
-{
+  float getRpm()
+  {
   newRpmData = false;
   int Hz = counterFreq / mytachCounter;  // Because the ISR is called @ counterFreq Hz
   return ( Hz - 0.033333 ) / 0.033333;
-}
+  }
 */
 
