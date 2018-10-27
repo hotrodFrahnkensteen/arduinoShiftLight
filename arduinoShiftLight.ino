@@ -48,7 +48,7 @@ struct SettingsStruct {
 };
 
 #define NEO_PIN 5
-int numPixels = 32;
+int numPixels = 24;
 // Parameter 1 = number of pixels in strip
 // Parameter 2 = Arduino pin number (most are valid)
 // Parameter 3 = pixel type flags, add together as needed:
@@ -645,6 +645,7 @@ void lightItUp(void) {
       for (i = 0; i < numPixels; i++) {
         strip.setPixelColor(i, 0);
       }
+      /*  this is for 32 pixels
       if ( dotCount < 16 ) {
         strip.setPixelColor(dotCount, Wheel(Settings.color_primary));
       }
@@ -654,12 +655,23 @@ void lightItUp(void) {
       if ( (dotCount < 32) && (dotCount >= 24) ) {
         strip.setPixelColor(dotCount, Wheel(Settings.color_tertiary));
       }
+      */
+      if ( dotCount < 12 ) {
+        strip.setPixelColor(dotCount, Wheel(Settings.color_primary));
+      }
+      if ( (dotCount < 20) && (dotCount >= 12) ) {
+        strip.setPixelColor(dotCount, Wheel(Settings.color_secondary));
+      }
+      if ( (dotCount < 24) && (dotCount >= 20) ) {
+        strip.setPixelColor(dotCount, Wheel(Settings.color_tertiary));
+      }
       strip.show();
       break;
     case 1:
       for (i = 0; i < numPixels; i++) {
         strip.setPixelColor(i, 0);
       }
+      /* for 32 pixels
       for (i = 0; i < dotCount; i++) {
         if ( i < 16 ) {
           strip.setPixelColor(i, Wheel(Settings.color_primary));
@@ -671,14 +683,28 @@ void lightItUp(void) {
           strip.setPixelColor(i, Wheel(Settings.color_tertiary));
         }
       }
+      */
+      for (i = 0; i < dotCount; i++) {
+        if ( i < 12 ) {
+          strip.setPixelColor(i, Wheel(Settings.color_primary));
+        }
+        if ( (i < 20) && (i >= 12) ) {
+          strip.setPixelColor(i, Wheel(Settings.color_secondary));
+        }
+        if ( (i <= 24) && (i >= 20) ) {
+          strip.setPixelColor(i, Wheel(Settings.color_tertiary));
+        }
+      }
       strip.show();
       break;
     case 2:
       dotSize = (Settings.shift_rpm - Settings.enable_rpm) / (numPixels / 2);
-      dotCount = ((rpm - Settings.enable_rpm) / dotSize) + 16; // 16 to 32
+      //dotCount = ((rpm - Settings.enable_rpm) / dotSize) + 16; // 16 to 32
+      dotCount = ((rpm - Settings.enable_rpm) / dotSize) + 12; // 12 to 24
       for (i = 0; i < numPixels; i++) {
         strip.setPixelColor(i, 0);
       }
+      /*
       for (i = 16; i < dotCount; i++) {
         if ( i < 24 ) {
           strip.setPixelColor(i, Wheel(Settings.color_primary));
@@ -691,6 +717,21 @@ void lightItUp(void) {
         if ( (i <= 32) && (i >= 28) ) {
           strip.setPixelColor(i, Wheel(Settings.color_tertiary));
           strip.setPixelColor(31-i, Wheel(Settings.color_tertiary));
+        }
+      }
+      */
+      for (i = 12; i < dotCount; i++) {
+        if ( i < 17 ) {
+          strip.setPixelColor(i, Wheel(Settings.color_primary));
+          strip.setPixelColor(23-i, Wheel(Settings.color_primary));
+        }
+        if ( (i < 21) && (i >= 17) ) {
+          strip.setPixelColor(i, Wheel(Settings.color_secondary));
+          strip.setPixelColor(23-i, Wheel(Settings.color_secondary));
+        }
+        if ( (i <= 24) && (i >= 21) ) {
+          strip.setPixelColor(i, Wheel(Settings.color_tertiary));
+          strip.setPixelColor(23-i, Wheel(Settings.color_tertiary));
         }
       }
       strip.show();
