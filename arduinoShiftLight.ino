@@ -21,7 +21,7 @@ int configAddress = 0;
 
 // Thank you buxtronix!
 // http://www.buxtronix.net/2011/10/rotary-encoders-done-properly.html
-// https://github.com/buxtronix/arduino/tree/master/libraries/Rotaryc
+// https://github.com/buxtronix/arduino/tree/master/libraries/Rotary
 #include <Rotary.h>
 
 // Thank you Brian Park!
@@ -197,16 +197,26 @@ void loop() {
 
 
   */
-  nowTime = millis();
-  if ( nowTime - lastTime > 10000 ) {          // a zero detector
-    rpm = 0;
-  } else if ( nowTime - lastTime > 1000 ) {    // instead of using delay
-    detachInterrupt(digitalPinToInterrupt(tachPin));
-    elapsedTime = nowTime - lastTime; 
-    lastTime = nowTime;
-    rpm = ( revs / elapsedTime ) * 60000 / cylinderDivider;
-    revs = 0;
-    attachInterrupt(digitalPinToInterrupt(tachPin), tachISR, RISING);
+  if ( fakeRPM == false ) {
+    nowTime = millis();
+    if ( nowTime - lastTime > 10000 ) {          // a zero detector
+      rpm = 0;
+    } else if ( nowTime - lastTime > 1000 ) {    // instead of using delay
+      detachInterrupt(digitalPinToInterrupt(tachPin));
+      elapsedTime = nowTime - lastTime; 
+      lastTime = nowTime;
+      rpm = ( revs / elapsedTime ) * 60000 / cylinderDivider;
+      revs = 0;
+      attachInterrupt(digitalPinToInterrupt(tachPin), tachISR, RISING);
+    }
+  } else {
+      if ( fakeRpmCounter > 8000 ) {
+          fakeRpmCounter = 8000; 
+      }
+      if ( fakeRpmCounter < 500 ) {
+          fakeRpmCounter = 500;
+      }
+      rpm = fakeRpmCounter;
   }
   
   // THIS CALL PUSHES THE RPM VALUE TO THE DISPLAYS
@@ -913,10 +923,10 @@ void rotate() {
   unsigned char result = rotary.process();
   if (result == DIR_CW) {
     clickCounter--;
-    fakeRpmCounter--;
+    fakeRpmCounter-=100;
   } else if (result == DIR_CCW) {
     clickCounter++;
-    fakeRpmCounter++;
+    fakeRpmCounter+=100;
   }
 }
 
