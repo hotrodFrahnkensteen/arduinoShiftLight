@@ -100,39 +100,15 @@ volatile int setItemPos = 0;
 
 //configuration for the Tachometer variables
 #include <FreqMeasure.h>
-#define tachPin 7
-int senseoption = 3; // either 1 or 2. 1 == interrupt, 2 == freq counter. chippernut defaults to 2
-int cal = 30; // chippernut uses 30 by default
-int justfixed = 0;
-volatile unsigned long lastPulseTime;
-volatile unsigned long interval = 0;
-volatile int timeoutCounter;
-volatile int timeoutValue;
+#define tachPin 7 // int 3 is pin 7 in micro
+
 long rpm = 1000;
-long revs;
-long rpm_last;
-//long displayRpm;
-//long previousTime;
-long previousMillis = 0;
+long revs = 0;
+long nowTime;
+long lastTime = 0;
+long elapsedTime;
+const int cylinderDivider = 2; // 4cyl fires twice per crank revolution
 
-const int numReadings = 5;
-int rpmArray[numReadings] = {0, 0, 0, 0, 0};
-int index = 0;
-long total = 0;
-long average = 0;
-
-//int rpmLast = 3000;
-//float revValue = 0;
-//float rev = 0;
-//int oldTime = 0;
-//int time;
-//const unsigned long sampleTime = 50;
-//const int cylinderDivider = 2; // 4cyl fires twice per crank revolution
-//#define counterFreq 10000 // for measuring the RPM.  The input signal is the gate
-//volatile int tachCounter = 0;
-//volatile int mytachCounter = 0;
-//volatile boolean newRpmData = false;
-//int timer1_counter;
 bool fakeRPM = false;
 int displayStyle = 0; // 0 for dot, 1 for bar
 
@@ -201,24 +177,10 @@ void setup() {
   // rotary encoder setup
   pinMode(encoder0PinA, INPUT_PULLUP);
   pinMode(encoder0PinB, INPUT_PULLUP);
+  pinMode(tachPin, INPUT);
   attachInterrupt(digitalPinToInterrupt(encoder0PinA), rotate, CHANGE);
   attachInterrupt(digitalPinToInterrupt(encoder0PinB), rotate, CHANGE);
-
-  // config for the Tach
-  pinMode(tachPin, INPUT);
-  // digitalWrite(sensorPin, HIGH); // enable internal pullup (if Hall sensor needs it)
-  switch (senseoption) {
-    case 1:
-      attachInterrupt(digitalPinToInterrupt(tachPin), sensorIsr, RISING);
-      break;
-    case 2:
-      FreqMeasure.begin();
-      break;
-  }
-  //revs = 0;
-  //rpm = 0;
-  //displayRpm = 0;
-  //previousTime = 0;
+  attachInterrupt(digitalPinToInterrupt(tachPin), tachISR, RISING);
 
 }
 
@@ -235,67 +197,19 @@ void loop() {
 
 
   */
-  // this should either display or count rpm
-  switch (senseoption) {
-    case 1:
-      rpm = long(60e7 / cal) / (float)interval;
-      break;
-    case 2:
-      if (FreqMeasure.available()) {
-        rpm = (600 / cal) * FreqMeasure.countToFrequency(FreqMeasure.read());
-        timeoutCounter = timeoutValue;
-      }
-      break;
-    case 3:
-      if ( fakeRpmCounter > fakeRpmCounterLast && fakeRPM == true ) {
-        rpm += 100;
-        fakeRpmCounterLast = fakeRpmCounter;
-      } else if ( fakeRpmCounter < fakeRpmCounterLast && fakeRPM == true ) {
-        rpm -= 100;
-        fakeRpmCounterLast = fakeRpmCounter;
-      }
-      if ( rpm > 8100 ) {
-        rpm = 8000;
-        fakeRpmCounterLast = fakeRpmCounter;
-      }
-      if ( rpm < 400 ) {
-        rpm = 500;
-        fakeRpmCounterLast = fakeRpmCounter;
-      }
-      break;
+  nowTime = millis();
+  if ( nowTime - lastTime > 10000 ) {          // a zero detector
+    rpm = 0;
+  } else if ( nowTime - lastTime > 1000 ) {    // instead of using delay
+    detachInterrupt(digitalPinToInterrupt(tachPin));
+    elapsedTime = nowTime - lastTime; 
+    lastTime = nowTime;
+    rpm = ( revs / elapsedTime ) * 60000 / cylinderDivider;
+    revs = 0;
+    attachInterrupt(digitalPinToInterrupt(tachPin), tachISR, RISING);
   }
-  // this looks like controlling hysteresis
-  // don't count if less than +/- 20%, more than zero, fixed less than 3 times
-  /*
-    if (((rpm > (rpm_last +(rpm_last*.2))) || (rpm < (rpm_last - (rpm_last*.2)))) && (rpm_last > 0) && (justfixed < 3)){
-          rpm = rpm_last; // don't count the change
-          justfixed++;
-          if(verbose){Serial.print("FIXED!  ");}
-          if(verbose){Serial.println(rpm_last);}
-
-    } else {
-      rpm_last = rpm;
-      justfixed--;
-      if (justfixed <= 0){justfixed = 0;}
-    }
-  */
-  // average out rpm over numReadings
-  if (smoothing) {
-    total = total - rpmArray[index];
-    rpmArray[index] = rpm;
-    total = total + rpmArray[index];
-    index = index + 1;
-    if (index >= numReadings) {
-      index = 0;
-    }
-    average = total / numReadings;
-    if (verbose) {
-      Serial.print("average: ");
-      Serial.println(average);
-    }
-    rpm = average;
-  }
-
+  
+  // THIS CALL PUSHES THE RPM VALUE TO THE DISPLAYS
   lightItUp(); // use the value of RPM to light up the neopixel bar
 
   // polling for a button press
@@ -303,7 +217,7 @@ void loop() {
   if ( !menuState ) {
     tachDisplay = true;
 
-    Serial.println("revs: " + String(revs) + " rpmArray[index]: " + String(rpmArray[index]) + " total: " + String(total) + " index: " + String(index) + " average: " + String(average));
+    //Serial.println("revs: " + String(revs) + " rpmArray[index]: " + String(rpmArray[index]) + " total: " + String(total) + " index: " + String(index) + " average: " + String(average));
     ///////Serial.println("rpm: " + String(rpm) + " rpmArray[index]: " + String(rpmArray[index]) + " total: " + String(total) + " index: " + String(index) + " average: " + String(average));
     //String(rpm).toCharArray(displaybuffer,5);
     snprintf(displaybuffer, sizeof(displaybuffer), "%04d", rpm);
@@ -1006,6 +920,10 @@ void rotate() {
   }
 }
 
+void tachISR() {
+  revs++;
+}
+
 bool loadConfig() {
   if ( verbose ) {
     delay(1000);
@@ -1050,74 +968,3 @@ void saveConfig() {
   String("----").toCharArray(displaybuffer, 5);
   alpha4print();
 }
-
-void tachInterrupt()
-{
-  revs++;
-}
-
-void sensorIsr()
-{
-  unsigned long now = micros();
-  interval = now - lastPulseTime;
-  lastPulseTime = now;
-  timeoutCounter = timeoutValue;
-}
-
-/*
-  int getRPM()
-  {
-  int count = 0;
-  boolean countFlag = LOW;
-  unsigned long currentTime = 0;
-  unsigned long startTime = millis();
-  while (currentTime <= sampleTime)
-  {
-    if (digitalRead(tachPin) == HIGH)
-    {
-      countFlag = HIGH;
-    }
-    if (digitalRead(tachPin) == LOW && countFlag == HIGH)
-    {
-      count++;
-      countFlag=LOW;
-    }
-    currentTime = millis() - startTime;
-  }
-  int countRpm = int(60000/float(sampleTime))*count;
-  return countRpm;
-  }
-*/
-
-/*
-  // Tach signal input triggers this interrupt vector on the falling edge of pin 2
-  void tachInterrupt()
-  {
-  mytachCounter = tachCounter;
-  tachCounter = 0;
-  newRpmData = true;
-  //digitalWrite(systemLedPin, !digitalRead( systemLedPin )); // toggle LED
-  }
-
-
-  ISR(TIMER1_OVF_vect)
-  {
-  TCNT1 = timer1_counter;   // preload timer
-  tachCounter++;
-
-   // clamp for when engine is stopped
-   //if( tachCounter = 65535 )
-    //tachCounter = 0;
-
-  //digitalWrite(systemLedPin, !digitalRead( systemLedPin ));  // Toggle LED
-
-  }
-
-  float getRpm()
-  {
-  newRpmData = false;
-  int Hz = counterFreq / mytachCounter;  // Because the ISR is called @ counterFreq Hz
-  return ( Hz - 0.033333 ) / 0.033333;
-  }
-*/
-
