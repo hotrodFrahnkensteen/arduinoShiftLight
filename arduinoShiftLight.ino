@@ -71,8 +71,8 @@ char displaybuffer[5] = "0000";
 Rotary rotary = Rotary(0, 1);
 int clickCounter = 0;
 int clickCounterLast = 0;
-int fakeRpmCounter = 0;
-int fakeRpmCounterLast = 0;
+unsigned int fakeRpmCounter = 0;
+unsigned int fakeRpmCounterLast = 0;
 
 // button on rotary encoder
 #define buttonPin 8
@@ -102,16 +102,32 @@ volatile int setItemPos = 0;
 #include <FreqMeasure.h>
 #define tachPin 7 // int 3 is pin 7 in micro
 
-long rpm = 1000;
-long revs = 0;
-long nowTime;
-long lastTime = 0;
-long elapsedTime;
+byte rpmArraySize = 3;  // 3 values
+unsigned int rpmArray[4];
+byte rpmArrayIdx = 0;
+byte rpmIdx = 0;
+unsigned int rpm = 1000;
+unsigned int rpmTotal = 0;
+unsigned int revs = 0;
+unsigned long nowTime = micros();
+unsigned long lastTime = 0;
+unsigned long elapsedTime;
 const int cylinderDivider = 2; // 4cyl fires twice per crank revolution
 
 bool fakeRPM = false;
 int displayStyle = 0; // 0 for dot, 1 for bar
 
+
+/*
+
+███████╗███████╗████████╗██╗   ██╗██████╗ 
+██╔════╝██╔════╝╚══██╔══╝██║   ██║██╔══██╗
+███████╗█████╗     ██║   ██║   ██║██████╔╝
+╚════██║██╔══╝     ██║   ██║   ██║██╔═══╝ 
+███████║███████╗   ██║   ╚██████╔╝██║     
+╚══════╝╚══════╝   ╚═╝    ╚═════╝ ╚═╝     
+                                          
+ */
 void setup() {
   Serial.begin(115200);
 
@@ -182,32 +198,46 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(encoder0PinB), rotate, CHANGE);
   attachInterrupt(digitalPinToInterrupt(tachPin), tachISR, RISING);
 
+  // init rpm array to zeros
+  for (rpmArrayIdx = 0; rpmArrayIdx < rpmArraySize; rpmArrayIdx++) {
+    rpmArray[rpmArrayIdx] = 0;
+  }
 }
 
 
 /*
-   MAIN
+
+███╗   ███╗ █████╗ ██╗███╗   ██╗
+████╗ ████║██╔══██╗██║████╗  ██║
+██╔████╔██║███████║██║██╔██╗ ██║
+██║╚██╔╝██║██╔══██║██║██║╚██╗██║
+██║ ╚═╝ ██║██║  ██║██║██║ ╚████║
+╚═╝     ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝
+                                
 */
 void loop() {
   delay(10);
-  /*
 
-
-     start of main block
-
-
-  */
   if ( fakeRPM == false ) {
-    nowTime = millis();
-    if ( nowTime - lastTime > 10000 ) {          // a zero detector
-      rpm = 0;
-    } else if ( nowTime - lastTime > 1000 ) {    // instead of using delay
+    nowTime = micros();                     //  0.000001
+    if ( nowTime - lastTime > 500000 ) {    // instead of using delay 500msec
       detachInterrupt(digitalPinToInterrupt(tachPin));
       elapsedTime = nowTime - lastTime; 
       lastTime = nowTime;
-      rpm = ( revs / elapsedTime ) * 60000 / cylinderDivider;
+              //   secs/min microsec/sec
+      rpm = revs * ( 60 * 1000000 ) / elapsedTime / cylinderDivider;
+      rpmArray[rpmIdx] = rpm;
+      rpmIdx++;
+      if ( rpmIdx > 2 ) {
+          rpmIdx = 0;
+      }
       revs = 0;
       attachInterrupt(digitalPinToInterrupt(tachPin), tachISR, RISING);
+      rpmTotal = 0;
+      for (rpmArrayIdx = 0; rpmArrayIdx < rpmArraySize; rpmArrayIdx++) {
+        rpmTotal += rpmArray[rpmArrayIdx];
+      }
+      rpm = rpmTotal / rpmArraySize;
     }
   } else {
       if ( fakeRpmCounter > 8000 ) {
@@ -218,6 +248,8 @@ void loop() {
       }
       rpm = fakeRpmCounter;
   }
+
+  Serial.println("revs: " + String(revs) + " rpm: " + String(rpm) + " now time: " + String(nowTime) + " last time: " + String(lastTime) + " elapsed time: " + String(elapsedTime));
   
   // THIS CALL PUSHES THE RPM VALUE TO THE DISPLAYS
   lightItUp(); // use the value of RPM to light up the neopixel bar
@@ -227,9 +259,7 @@ void loop() {
   if ( !menuState ) {
     tachDisplay = true;
 
-    //Serial.println("revs: " + String(revs) + " rpmArray[index]: " + String(rpmArray[index]) + " total: " + String(total) + " index: " + String(index) + " average: " + String(average));
-    ///////Serial.println("rpm: " + String(rpm) + " rpmArray[index]: " + String(rpmArray[index]) + " total: " + String(total) + " index: " + String(index) + " average: " + String(average));
-    //String(rpm).toCharArray(displaybuffer,5);
+    Serial.println("revs: " + String(revs) + " rpm: " + String(rpm));
     snprintf(displaybuffer, sizeof(displaybuffer), "%04d", rpm);
     alpha4print();
     //delay(250);
@@ -294,7 +324,7 @@ void loop() {
       case 2: // enable rpm
         if ( clickCounter > clickCounterLast && Settings.enable_rpm <= Settings.shift_rpm - 200 ) {
           Settings.enable_rpm += 100;
-        } else if ( clickCounter < clickCounterLast && Settings.enable_rpm > 2000 ) {
+        } else if ( clickCounter < clickCounterLast && Settings.enable_rpm > 1500 ) {
           Settings.enable_rpm -= 100;
         }
         clickCounterLast = clickCounter;
